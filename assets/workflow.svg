@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560" font-family="'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', sans-serif">
+  <defs>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#0284c7"/>
+    </marker>
+    <marker id="arrAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#d97706"/>
+    </marker>
+    <marker id="arrPurple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#7e22ce"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#059669"/>
+    </marker>
+  </defs>
+
+  <!-- White Background -->
+  <rect width="1200" height="560" rx="16" fill="#ffffff"/>
+  <rect x="2" y="2" width="1196" height="556" rx="14" fill="none" stroke="#cbd5e1" stroke-width="2"/>
+
+  <!-- Header -->
+  <text x="44" y="48" fill="#0f172a" font-size="22" font-weight="700">agent-kit 구조 — 설계자 · 맥락 없는 검토자 · 작업자 분리</text>
+  <text x="44" y="76" fill="#475569" font-size="14">기억은 문서(SPEC.md · SESSION_HANDOFF.md)에 두고, 완료 판정은 고정 검증(verify.ps1)과 훅(guard.mjs · pre-push)으로 잠근다</text>
+  <line x1="44" y1="94" x2="1156" y2="94" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- 1. User Box (Left: x=44..284, width=240) -->
+  <rect x="44" y="145" width="240" height="250" rx="12" fill="#f0f9ff" stroke="#0284c7" stroke-width="2"/>
+  <rect x="44" y="145" width="240" height="44" rx="12" fill="#0284c7"/>
+  <rect x="44" y="175" width="240" height="14" fill="#0284c7"/>
+  <text x="164" y="173" fill="#ffffff" font-size="16" font-weight="700" text-anchor="middle">사용자 (User)</text>
+
+  <text x="64" y="222" fill="#0f172a" font-size="14" font-weight="600">• 요구사항 · 목표 대화</text>
+  <text x="64" y="252" fill="#0f172a" font-size="14" font-weight="600">• 완료 기준 · 제약 합의</text>
+  <text x="64" y="282" fill="#0f172a" font-size="14" font-weight="600">• 절충안 · 남긴 위험 결정</text>
+  <text x="64" y="312" fill="#0f172a" font-size="14" font-weight="600">• 최종 결과물 확인</text>
+
+  <rect x="60" y="342" width="208" height="34" rx="6" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="1"/>
+  <text x="164" y="364" fill="#0369a1" font-size="13" font-weight="700" text-anchor="middle">설계 대화와 최종 결정만 담당</text>
+
+  <!-- Arrow: User <-> Designer (x=284..404) -->
+  <line x1="292" y1="265" x2="396" y2="265" stroke="#0284c7" stroke-width="2.5" marker-start="url(#arrBlue)" marker-end="url(#arrBlue)"/>
+  <text x="344" y="246" fill="#0369a1" font-size="13" font-weight="700" text-anchor="middle">1. 요구 합의</text>
+  <text x="344" y="290" fill="#0369a1" font-size="12.5" font-weight="600" text-anchor="middle">6. 수락 보고</text>
+
+  <!-- 2. Designer Box (Center: x=404..714, width=310) -->
+  <rect x="404" y="120" width="310" height="305" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+  <rect x="404" y="120" width="310" height="44" rx="12" fill="#d97706"/>
+  <rect x="404" y="150" width="310" height="14" fill="#d97706"/>
+  <text x="559" y="148" fill="#ffffff" font-size="16" font-weight="700" text-anchor="middle">설계자 (Designer)</text>
+
+  <text x="424" y="196" fill="#92400e" font-size="14" font-weight="700">• 코드는 읽지만 직접 쓰지 않음</text>
+  <text x="424" y="226" fill="#1e293b" font-size="13.5">• 설계 · 결정 이유 → <tspan fill="#b45309" font-weight="700">SPEC.md</tspan></text>
+  <text x="424" y="254" fill="#1e293b" font-size="13.5">• 진행 상태 표 → <tspan fill="#b45309" font-weight="700">SESSION_HANDOFF.md</tspan></text>
+  <text x="424" y="282" fill="#1e293b" font-size="13.5">• 작업별 스펙 → <tspan fill="#b45309" font-weight="700">handoff/&lt;ID&gt;.md</tspan></text>
+  <text x="424" y="310" fill="#1e293b" font-size="13.5">• 착수 기준 고정 → <tspan fill="#b45309" font-weight="700">verify.ps1 -Prepare</tspan></text>
+  <text x="424" y="338" fill="#1e293b" font-size="13.5">• 검증 재실행·수락 → <tspan fill="#b45309" font-weight="700">verify.ps1 -Accept</tspan></text>
+
+  <rect x="420" y="368" width="278" height="36" rx="6" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
+  <text x="559" y="391" fill="#92400e" font-size="12.5" font-weight="700" text-anchor="middle">핵심 지침만 상시 로드 (절차는 On-demand)</text>
+
+  <!-- 3. Reviewer Box (Top Right: x=836..1156, width=320) -->
+  <rect x="836" y="112" width="320" height="175" rx="12" fill="#faf5ff" stroke="#7e22ce" stroke-width="2"/>
+  <rect x="836" y="112" width="320" height="42" rx="12" fill="#7e22ce"/>
+  <rect x="836" y="140" width="320" height="14" fill="#7e22ce"/>
+  <text x="996" y="139" fill="#ffffff" font-size="15.5" font-weight="700" text-anchor="middle">독립 검토자 · 조사 (Reviewer)</text>
+
+  <text x="856" y="182" fill="#581c87" font-size="13.5" font-weight="700">• 설계 대화를 모르는 별도 격리 세션</text>
+  <text x="856" y="208" fill="#1e293b" font-size="13">• 읽기 도구와 자기 보고서 쓰기만 허용</text>
+  <text x="856" y="234" fill="#1e293b" font-size="13">• 빈틈 · 모순 · 과잉 설계 · 캐시 오판 탐지</text>
+
+  <rect x="852" y="247" width="288" height="28" rx="6" fill="#f3e8ff" stroke="#d8b4fe" stroke-width="1"/>
+  <text x="996" y="266" fill="#6b21a8" font-size="12.5" font-weight="700" text-anchor="middle">판정: 진행 가능 | 수정 후 진행 | 중단</text>
+
+  <!-- 4. Worker Box (Bottom Right: x=836..1156, width=320) -->
+  <rect x="836" y="330" width="320" height="190" rx="12" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
+  <rect x="836" y="330" width="320" height="42" rx="12" fill="#059669"/>
+  <rect x="836" y="358" width="320" height="14" fill="#059669"/>
+  <text x="996" y="357" fill="#ffffff" font-size="15.5" font-weight="700" text-anchor="middle">작업자 (Worker)</text>
+
+  <text x="856" y="400" fill="#065f46" font-size="13.5" font-weight="700">• 인계 1건당 독립 세션 (병렬은 worktree)</text>
+  <text x="856" y="426" fill="#1e293b" font-size="13">• 구현 · 테스트 작성 · 작업 브랜치 커밋</text>
+  <text x="856" y="452" fill="#1e293b" font-size="13">• <tspan fill="#047857" font-weight="700">verify.ps1</tspan> 실행으로 검증 증거 생성</text>
+  <text x="856" y="478" fill="#1e293b" font-size="13">• 수락 후 <tspan fill="#047857" font-weight="700">-CheckAccepted</tspan> 대조 · 제출</text>
+
+  <rect x="852" y="487" width="288" height="24" rx="6" fill="#d1fae5" stroke="#6ee7b7" stroke-width="1"/>
+  <text x="996" y="504" fill="#065f46" font-size="12" font-weight="700" text-anchor="middle">자기 수락(-Accept) 및 인계 수정 차단</text>
+
+  <!-- Arrows Designer <-> Reviewer (x=714..836) -->
+  <line x1="722" y1="195" x2="828" y2="195" stroke="#7e22ce" stroke-width="2.5" marker-start="url(#arrPurple)" marker-end="url(#arrPurple)"/>
+  <text x="775" y="177" fill="#6b21a8" font-size="13" font-weight="700" text-anchor="middle">2. 빈틈 검토</text>
+  <text x="775" y="217" fill="#6b21a8" font-size="12" font-weight="600" text-anchor="middle">스펙 · critical</text>
+
+  <!-- Arrows Designer <-> Worker (x=714..836) -->
+  <line x1="714" y1="362" x2="828" y2="362" stroke="#d97706" stroke-width="2.5" marker-end="url(#arrAmber)"/>
+  <text x="775" y="346" fill="#b45309" font-size="13" font-weight="700" text-anchor="middle">3. 작업 위임</text>
+
+  <line x1="836" y1="406" x2="722" y2="406" stroke="#059669" stroke-width="2.5" marker-end="url(#arrGreen)"/>
+  <text x="775" y="427" fill="#047857" font-size="13" font-weight="700" text-anchor="middle">5. 결과 보고</text>
+
+  <!-- Arrow Worker -> Reviewer (vertical at x=996, y=330..287) -->
+  <line x1="996" y1="328" x2="996" y2="294" stroke="#7e22ce" stroke-width="2.2" stroke-dasharray="5 3" marker-end="url(#arrPurple)"/>
+  <text x="1080" y="314" fill="#6b21a8" font-size="12.5" font-weight="700" text-anchor="middle">4. 완료 전 검토 (critical)</text>
+
+  <!-- Bottom Guardrails Banner (x=44..714, width=670) -->
+  <rect x="44" y="452" width="670" height="68" rx="10" fill="#fef2f2" stroke="#ef4444" stroke-width="1.8"/>
+  <text x="64" y="479" fill="#b91c1c" font-size="14.5" font-weight="700">실수 방지 가드레일 (hooks/guard.mjs · hooks/pre-push · verify.ps1)</text>
+  <text x="64" y="504" fill="#334155" font-size="13" font-weight="600">비밀·쿠키 파일 열람 차단  |  보호 브랜치 push·우회 차단  |  역할 경계 강제  |  캐시 재생 PASS 오판 차단</text>
+</svg>

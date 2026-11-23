@@ -1,0 +1,72 @@
+#!/bin/sh
+# agent-kit pre-push (installed by agent-kit/init.ps1; local only, never committed)
+# Applies the repository's submission policy to whoever runs git (any agent or a person). The policy is local Git config
+# written by `init.ps1 -GitSetup -Submission ...`; hooks/guard.mjs reads the same keys:
+#   agentkit.submission=pr      blocks pushes that update or delete agentkit.protectedBranches (main,master if empty)
+#   agentkit.submission=direct  blocks only agentkit.protectedBranches (none unless given)
+#   agentkit.submission=local   blocks every push
+#   not set (older setups)      blocks main/master
+# A guard rail against mistakes, not a permission boundary.
+# git passes one line per ref on stdin: <local ref> <local sha> <remote ref> <remote sha>
+# Repository config only (--local): a global or system value never sets the policy.
+sub=$(git config --local --get agentkit.submission 2>/dev/null | tr -d ' \r' | tr '[:upper:]' '[:lower:]')
+prot=$(git config --local --get agentkit.protectedBranches 2>/dev/null | tr -d ' \r')
+base_cfg=$(git config --local --get agentkit.base 2>/dev/null | tr -d ' \r')
+direct_base=${base_cfg#refs/heads/}
+direct_base=${direct_base#refs/remotes/}
+direct_base=${direct_base#origin/}
+if [ -z "$direct_base" ]; then
+  orig_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | tr -d ' \r')
+  orig_head=${orig_head#origin/}
+  if [ -n "$orig_head" ]; then direct_base="$orig_head,main,master"; else direct_base=main,master; fi
+fi
+top=$(git rev-parse --show-toplevel 2>/dev/null)
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+main_root=${common%/.git}
+case "$sub" in
+  local)
+    echo "[agent-kit pre-push] blocked: this repository's submission mode is local (no pushes). It changes only by agreement with the user, through init.ps1 -GitSetup -Submission." >&2
+    exit 1
+    ;;
+  pr) [ -n "$prot" ] || prot=main,master ;;
+  direct) ;;
+  *) prot=main,master ;;
+esac
+while read local_ref local_sha remote_ref remote_sha; do
+  b=${remote_ref#refs/heads/}
+  [ "$b" = "$remote_ref" ] && continue   # tags and other non-branch refs
+  case ",$prot," in
+    *",$b,"*)
+      echo "[agent-kit pre-push] blocked: direct push to protected branch $b (submission: ${sub:-not set}). Push a work branch and merge it through a PR after review." >&2
+      exit 1
+      ;;
+  esac
+  if [ "$sub" = "direct" ]; then
+    case ",$direct_base," in
+      *",$b,"*)
+        has_approved=0
+        matched=0
+        for root in "$top" "$main_root"; do
+          [ -n "$root" ] && [ -d "$root/handoff" ] || continue
+          for f in "$root"/handoff/*/approved.json; do
+            [ -f "$f" ] && has_approved=1 && break
+          done
+          if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+            for f in "$root"/handoff/*/accepted.json; do
+              [ -f "$f" ] || continue
+              if grep -Eq "\"commit\"[[:space:]]*:[[:space:]]*\"$local_sha\"" "$f" 2>/dev/null; then
+                matched=1
+                break
+              fi
+            done
+          fi
+        done
+        if [ "$has_approved" = "1" ] && [ "$matched" = "0" ]; then
+          echo "[agent-kit pre-push] blocked: direct push to $b requires an accepted commit in handoff/*/accepted.json matching $local_sha (run verify.ps1 -Accept first)." >&2
+          exit 1
+        fi
+        ;;
+    esac
+  fi
+done
+exit 0

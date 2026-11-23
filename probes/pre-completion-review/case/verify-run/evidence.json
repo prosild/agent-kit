@@ -1,0 +1,8 @@
+[
+  {
+    "path": "scan-summary.txt",
+    "sha256": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    "mtimeUtc": "2026-11-18T00:10:00.0000000Z",
+    "stale": true
+  }
+]

@@ -1,0 +1,4 @@
+Scan Timestamp: 2026-11-18T09:10:00+09:00
+Target: demo-app:local (Java)
+Total: 1 (CRITICAL: 1, HIGH: 0, MEDIUM: 0)
+- CVE-2026-99999 | CRITICAL | org.example:web-core 6.2.19 | Fixed in 7.0.9 | Remote Code Execution

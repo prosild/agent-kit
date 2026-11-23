@@ -1,0 +1,3 @@
+M	src/auth.js
+M	test/auth.test.js
+M	scripts/deploy-prod.sh

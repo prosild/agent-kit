@@ -1,0 +1,16 @@
+# >>> agent-kit (local only, never committed; managed by agent-kit/init.ps1)
+/AGENTS.md
+/CLAUDE.md
+/CODEX.md
+/GEMINI.md
+/SESSION_HANDOFF.md
+/SPEC.md
+/DECISION_LOG.md
+/agent-roles/
+/handoff/
+/.worktrees/
+/.claude/settings.local.json
+/.claude/worktrees/
+/.codex/
+/.agents/
+# <<< agent-kit

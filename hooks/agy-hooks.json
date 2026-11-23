@@ -1,0 +1,16 @@
+{
+  "agent-kit-guard": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <agent-kit>/hooks/guard.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
