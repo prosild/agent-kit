@@ -9,7 +9,7 @@
   - **작업자 기본 실행 → 설계자 `-Accept` → 작업자 제출 직전 `-CheckAccepted`**:
     - 작업자 실행이 `handoff/<ID>/verify/runs/<실행>/`에 불변 증거(`run.json`, `summary.txt`, `output.txt`, `diff.patch`, `changed.txt`, `test-changes.txt`, `evidence.json`)를 남긴다.
     - **설계자의 `-Accept`는 기본적으로 검사 명령을 중복 재실행하지 않는다.** 동일 `approval`·동일 `HEAD` 커밋에서 가장 최근 작업자 실행이 `PASS`이고 워킹트리가 깨끗한지 즉시 대조해 `accepted.json`을 기록한다(명령까지 강제 재실행하려면 `-Rerun` 추가).
-    - `critical` 수락은 검토 보고의 `-ReviewedCommit <전체 해시>`와 `-ReviewReport <경로>`(`판정: 진행 가능 | 높음 0` 화이트리스트 및 `검토 commit` 일치 검증)를 함께 준다. `-Accept`가 실패해도 작업자의 기존 `PASS` 기록은 보존되므로 인자 오타 수정 후 바로 다시 `-Accept`할 수 있다.
+    - `critical` 수락은 검토 보고의 `-ReviewedCommit <전체 해시>`와 `-ReviewReport <경로>`가 모두 필수이며, 보고서 안의 `판정: 진행 가능 | 높음 0`·`검토 commit`(HEAD 일치)·`검증 경로`(수락할 작업자 실행의 `OUT` 또는 수동 증거 경로 일치)를 기계적으로 검증한다. `-Accept`가 실패해도 작업자의 기존 `PASS` 기록은 보존되므로 수정 후 바로 다시 `-Accept`할 수 있다.
     - `verify: -` 수동 검증 Git 작업은 작업자 실행 시 `RESULT: NONE`(exit 3)이 나오며, 설계자가 수동 증거를 직접 확인한 뒤 `verify.ps1 -Id <ID> -Accept -Manual`을 실행하면 현재 `HEAD` 커밋과 증거 해시를 `accepted.json`에 기록해 `direct` 모드 `pre-push` 검증을 통과시킨다.
   - **캐시·0건 테스트 차단**: 바뀌지 않은 일을 건너뛰거나 테스트가 실행되지 않은 출력(Gradle `UP-TO-DATE`·`FROM-CACHE`·`SKIPPED`·`NO-SOURCE` 및 실행 태스크 0개 요약, Go 전체 `(cached)` 또는 전체 `[no test files]`, Cargo 전체 `running 0 tests`[단 다른 타겟에서 1개 이상 실행됐으면 통과], Node `# tests 0`/`# pass 0`, Maven `Tests run: 0,`, `.NET` `Total tests: 0`, Pytest/Vitest 전원 skipped, Turborepo `FULL TURBO`, Nx 캐시 리플레이)은 실행 근거가 아니라 실패다.
   - 검증 전후 미커밋·미추적 소스/skip-worktree 숨긴 변경·Git 오류·검사 중 HEAD/추적 파일 변경은 실패다(`sparse-checkout`의 정상 `S` 표시는 허용). Git direct/local 통합은 `--ff-only`, 추가 commit이 필요하면 검증·수락을 다시 한다.

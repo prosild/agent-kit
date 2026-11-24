@@ -77,19 +77,47 @@ fail('재승인 뒤 worker PASS 없이 수락 불가', run('T01',{mode:'Accept'}
 pass('재승인 기준으로 새 검증', run('T01'));
 
 handoff('CRIT','echo critical','review: critical');
-pass('critical 승인',prepare('CRIT')); pass('critical 작업자 검증',run('CRIT'));
+pass('critical 승인',prepare('CRIT'));
+let critWorker = run('CRIT');
+pass('critical 작업자 검증',critWorker);
+const critOut1 = critWorker.field('OUT');
+const critRep = join(P,'handoff','sub-crit-review-1-report.md');
 fail('critical은 검토 커밋 필수',run('CRIT',{mode:'Accept'}),'requires -ReviewedCommit');
-fail('다른 검토 커밋 수락 차단',run('CRIT',{mode:'Accept',reviewed:'0'.repeat(40)}),'reviewed commit differs');
-pass('검토/작업자/수락 커밋 동일(실패한 -Accept 후에도 worker PASS 보존)',run('CRIT',{mode:'Accept',reviewed:HEAD}));
+fail('critical은 -ReviewReport 필수(누락 시 차단)',run('CRIT',{mode:'Accept',reviewed:HEAD}),'requires -ReviewReport');
+writeFileSync(critRep, '판정: 진행 가능\n');
+fail('critical 보고서에 높음 0 누락 시 차단',run('CRIT',{mode:'Accept',reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}),'높음 0');
+writeFileSync(critRep, '판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n');
+fail('critical 보고서에 검토 commit 줄 누락 시 차단',run('CRIT',{mode:'Accept',reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}),'missing 검토 commit');
+writeFileSync(critRep, `판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${HEAD}\n`);
+fail('critical 보고서에 검증 경로 줄 누락 시 차단',run('CRIT',{mode:'Accept',reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}),'missing 검증 경로');
+writeFileSync(critRep, `판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${HEAD}\n검증 경로:\n`);
+fail('critical 보고서의 빈 검증 경로(검증 경로:) 차단',run('CRIT',{mode:'Accept',reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}),'empty 검증 경로');
+writeFileSync(critRep, `판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${HEAD}\n검증 경로: ${join(P,'handoff','CRIT','verify','runs','other-stale-run')}\n`);
+fail('critical 보고서의 검증 경로가 수락할 worker OUT과 다르면 차단',run('CRIT',{mode:'Accept',reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}),'differs from verified worker run OUT');
+writeFileSync(critRep, `판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${HEAD}\n검증 경로: ${critOut1}\n`);
+fail('다른 검토 커밋 수락 차단',run('CRIT',{mode:'Accept',reviewed:'0'.repeat(40),reviewReport:'handoff/sub-crit-review-1-report.md'}),'reviewed commit differs');
+pass('검토 보고서(판정·커밋·검증 경로 OUT 일치) 동반 시 critical 경량 수락 성공(이전 실패 후에도 worker PASS 보존)',run('CRIT',{mode:'Accept',reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}));
 writeFileSync(join(P,'acceptance-dirty.txt'),'uncommitted');
 fail('수락 뒤 실패한 재검증',run('CRIT'),'uncommitted');
 rmSync(join(P,'acceptance-dirty.txt'));
 fail('실패한 재검증은 이전 수락을 무효화',run('CRIT',{mode:'CheckAccepted'}),'no acceptance');
-pass('critical 새 worker 검증',run('CRIT'));
-pass('critical 새 수락',run('CRIT',{mode:'Accept',reviewed:HEAD}));
+critWorker = run('CRIT');
+pass('critical 새 worker 검증',critWorker);
+fail('새 worker 실행 후 옛날 OUT을 가리키는 이전 검토 보고서로는 수락 불가',run('CRIT',{mode:'Accept',reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}),'differs from verified worker run OUT');
+const critOut2 = critWorker.field('OUT');
+writeFileSync(critRep, `판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${HEAD}\n검증 경로: ${critOut2}\n`);
+pass('critical -Accept -Rerun 시 workerRun에 검토된 OUT을 보존하고 run에 새 재실행 기록',run('CRIT',{mode:'Accept',rerun:true,reviewed:HEAD,reviewReport:'handoff/sub-crit-review-1-report.md'}));
+const critRerunAcc = json('CRIT','accepted.json');
+check('-Accept -Rerun의 workerRun이 검토 대상 OUT과 일치하고 run은 별도 재실행임',critRerunAcc.workerRun===critOut2 && critRerunAcc.run!==critOut2);
 
-handoff('FAIL', 'node -e "console.error(\'bad\'); process.exit(7)"'); prepare('FAIL'); r=run('FAIL');
-check('명령 실패 code7과 stderr 보존',r.code===7 && r.field('EXIT')==='7' && /bad/.test(read('FAIL','output.txt')) && /^FAIL exit 7/.test(r.field('RESULT')),r.out);
+handoff('FAIL', 'node -e "console.log(\'boot 1\'); console.log(\'boot 2\'); console.log(\'AssertionError: early failure\'); for(let i=4;i<=32;i++) console.log(\'ok step \'+i); console.error(\'err-stream\'); process.exit(7)"'); prepare('FAIL'); r=run('FAIL');
+check('명령 실패 code7·앞부분 에러 줄 선별 및 꼬리 병합 FAILURE-EXCERPT 자동 출력',
+  r.code===7 && r.field('EXIT')==='7' && /early failure/.test(read('FAIL','output.txt')) && /err-stream/.test(read('FAIL','output.txt'))
+  && /\[L[1-5]\] AssertionError: early failure/.test(read('FAIL','failure-excerpt.txt'))
+  && /\[L3[23]\]/.test(read('FAIL','failure-excerpt.txt'))
+  && /\d+ of 33 line\(s\)/.test(r.field('FAILURE-EXCERPT')||'')
+  && /\[L[1-5]\] AssertionError: early failure/.test(r.out)
+  && /^FAIL exit 7/.test(r.field('RESULT')), r.out);
 for(const [id,body] of [
   ['NONE','---\nverify: -\n---\n'],['COMMENT','---\nverify: - # manual\n---\n'],
   ['BODY','---\nreview: normal\n---\nverify: echo do-not-run\n'],['NOHEADER','verify: echo do-not-run\n']]){
@@ -227,20 +255,31 @@ spawnSync(PWSH,[...PWSH_BASE,'-Command',`(Get-Item -LiteralPath '${evStale}').La
 r=run('META'); pass('CRLF 변환 허용 및 SPEC 변경·수동 증거 기록 실행 PASS',r);
 check('SPEC 변경 신호 출력',r.field('SPEC-CHANGED').startsWith('yes'),r.out);
 check('수동 증거 해시·오래된 증거 WARN 출력',/2 file\(s\); WARN 1 file\(s\) older than HEAD commit \(stale\.txt\)/.test(r.field('EVIDENCE')||''),r.out);
+const metaWorkerOut = r.field('OUT');
 const metaHead = git(['rev-parse','HEAD']);
 const repPath = join(P,'handoff','sub-meta-review-1-report.md');
 const badRepPath = join(P,'handoff','sub-meta-review-bad-report.md');
 const titledBadRepPath = join(P,'handoff','sub-meta-review-titled-bad-report.md');
 writeFileSync(badRepPath,'판정: 중단 | 높음 2 | 중간 0 | 낮음 0\n');
 writeFileSync(titledBadRepPath,'# T01 검토 보고\n판정: 중단 | 높음 1 | 중간 0 | 낮음 0\n');
-writeFileSync(repPath,`판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${metaHead}\n`);
+writeFileSync(repPath,`판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${metaHead}\n검증 경로: ${metaWorkerOut}\n`);
 fail('존재하지 않는 -ReviewReport는 실패',run('META',{mode:'Accept',reviewed:metaHead,reviewReport:'handoff/missing-report.md'}),'review report not found');
 fail('판정이 중단인 -ReviewReport는 수락 거부(worker 재실행 없이도 바로 재시도 가능)',run('META',{mode:'Accept',reviewed:metaHead,reviewReport:'handoff/sub-meta-review-bad-report.md'}),'verdict is not pass');
 fail('제목 줄 뒤에 중단 판정이 있는 보고서도 화이트리스트로 수락 거부',run('META',{mode:'Accept',reviewed:metaHead,reviewReport:'handoff/sub-meta-review-titled-bad-report.md'}),'verdict is not pass');
 pass('실패한 -Accept가 worker PASS를 파괴하지 않아 재검증 없이 즉시 정상 수락 통과',run('META',{mode:'Accept',reviewed:metaHead,reviewReport:'handoff/sub-meta-review-1-report.md'}));
 const metaAcc = json('META','accepted.json');
 check('accepted.json에 kind·reviewReport·reviewVerdict·evidence 보존',metaAcc.kind==='accept' && /sub-meta-review-1-report\.md$/.test(metaAcc.reviewReport) && metaAcc.reviewVerdict.includes('진행 가능') && Array.isArray(metaAcc.evidence) && metaAcc.evidence.length===2,JSON.stringify(metaAcc));
-fail('이미 수락된 뒤 새 worker 검증 없이 빈 재수락 호출 차단',run('META',{mode:'Accept',reviewed:metaHead}),'prior worker PASS');
+fail('이미 수락된 뒤 새 worker 검증 없이 동일 보고서 재수락 호출 차단',run('META',{mode:'Accept',reviewed:metaHead,reviewReport:'handoff/sub-meta-review-1-report.md'}),'already accepted');
+pass('동일 보고서 중복 호출 거부 뒤에도 기존 유효한 수락(-CheckAccepted)은 보존됨',run('META',{mode:'CheckAccepted'}));
+handoff('MANCRIT', '-', 'review: critical'); prepare('MANCRIT');
+const manRep = join(P,'handoff','sub-mancrit-review-1-report.md');
+writeFileSync(manRep, `판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${metaHead}\n검증 경로: handoff/MANCRIT/approved.json\n`);
+fail('critical 수동 검증: evidence 파일이 없으면 수락 거부',run('MANCRIT',{mode:'Accept',manual:true,reviewed:metaHead,reviewReport:'handoff/sub-mancrit-review-1-report.md'}),'requires evidence files');
+mkdirSync(join(P,'handoff','MANCRIT','evidence'),{recursive:true});
+writeFileSync(join(P,'handoff','MANCRIT','evidence','screen.txt'),'ok\n');
+fail('critical 수동 검증: 검증 경로가 evidence 밖(approved.json)이면 수락 거부',run('MANCRIT',{mode:'Accept',manual:true,reviewed:metaHead,reviewReport:'handoff/sub-mancrit-review-1-report.md'}),'handoff/MANCRIT/evidence');
+writeFileSync(manRep, `판정: 진행 가능 | 높음 0 | 중간 0 | 낮음 0\n검토 commit: ${metaHead}\n검증 경로: handoff/MANCRIT/evidence\n`);
+pass('critical 수동 검증: 실제 evidence 경로와 일치하면 수락 성공',run('MANCRIT',{mode:'Accept',manual:true,reviewed:metaHead,reviewReport:'handoff/sub-mancrit-review-1-report.md'}));
 rmSync(join(P,'SPEC.md'));
 fail('검토 이후 커밋 변경하면 수락 대조 실패',run('CRIT',{mode:'CheckAccepted'}),'no acceptance');
 fail('커밋 변경 후 이전 worker PASS로 수락 불가',run('T01',{mode:'Accept'}),'prior worker PASS');

@@ -17,9 +17,9 @@
    - 작업자는 인계·`approved.json`·`accepted.json`을 수정하거나 `-Prepare`·`-Accept`를 실행하지 않는다.
    - 수동 검증 조건과 `verify: -` 작업은 확인 방법·증거를 `handoff/<ID>/evidence/`에 남긴다(실제 대상 vs 모의 환경 명시).
 6. `pr` 제출 방식이면 작업 브랜치 push 후 PR 생성(`direct`·`local`·비Git의 최종 제출은 설계자 수락 뒤에 수행).
-7. `review: critical`이면 `<agent-kit>/skills/agent-delegate/SKILL.md` 4절의 헤드리스 명령으로 완료 전 검토를 실행한다(수동 검토 정책일 때만 작업 파일·증거 경로를 보고에 남기고 대기).
-   - 수용한 `높음` 지적은 수정·커밋 후 5번(`verify.ps1`)부터 다시 돌리고 새 증거로 1회 재검토받는다. 재검토 뒤에도 남은 `높음`·반박·절충은 설계자에게 올린다.
-8. `handoff/<ID>-report.md`를 작성하고 턴을 끝낸다.
+7. `handoff/<ID>-report.md`에 인수 조건별 결과·증거·구현하며 정한 것·**남긴 위험**(미해결 취약점·끈 검사·미실행 시험)을 먼저 작성한다.
+8. `review: critical`이면 방금 작성한 `handoff/<ID>-report.md`와 검증 산출물(`OUT`) 경로를 넣어 `<agent-kit>/skills/agent-delegate/SKILL.md` 4절의 헤드리스 명령으로 완료 전 검토를 실행하고, 검토가 끝나면 보고에 최종 검토 보고 경로와 조치 내역을 덧붙인다(수동 검토 정책일 때만 작업 파일·증거 경로를 남기고 대기). `normal` 작업은 7번 작성으로 바로 턴을 끝낸다.
+   - 수용한 `높음` 지적은 수정·커밋 후 5~7번(재검증 → `pr`이면 작업 브랜치 push 갱신 → 보고의 commit·OUT 갱신)을 다시 거쳐 새 번호로 1회 재검토받는다. 재검토 뒤에도 남은 `높음`·반박·절충은 설계자에게 올린다.
 9. 설계자 수락(`accepted <commit>`) 수신 후 제출 직전 대조:
    - `verify.ps1 -Id <ID> -CheckAccepted`로 현재 커밋·인계·클린 트리 일치를 확인한다.
    - `pr`: 원격 PR head가 수락 commit과 일치하는지 확인하고, 병합까지 지시받았으면 반드시 `gh pr merge --match-head-commit <수락 전체 해시>`로 병합한다.

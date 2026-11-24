@@ -110,21 +110,70 @@ function Collect-Evidence([long]$headEpoch) {
     return @{ list = $evidenceList; stale = $staleEvidence }
 }
 
-function Validate-ReviewReport([string]$reportArg, [string]$expectedHead) {
-    if (-not $reportArg) { return @{ path = ''; verdict = '' } }
+$isWinHost = ($env:OS -eq 'Windows_NT')
+function Normalize-ComparePath([string]$p) {
+    if (-not $p) { return '' }
+    $clean = $p.Trim().Trim('"', "'", '`')
+    if (-not $clean) { return '' }
+    $full = if ([IO.Path]::IsPathRooted($clean)) { [IO.Path]::GetFullPath($clean) } else { [IO.Path]::GetFullPath((Join-Path $Project $clean)) }
+    if (Test-Path -LiteralPath $full) {
+        try { $full = (Resolve-Path -LiteralPath $full).ProviderPath } catch {}
+    }
+    if ($isWinHost) { return $full.Replace('\', '/').TrimEnd('/') }
+    return $full.TrimEnd('/')
+}
+function Test-SamePath([string]$a, [string]$b) {
+    $na = Normalize-ComparePath $a
+    $nb = Normalize-ComparePath $b
+    if (-not $na -or -not $nb) { return $false }
+    if ($isWinHost) { return ($na -ieq $nb) }
+    return ($na -ceq $nb)
+}
+
+function Validate-ReviewReport([string]$reportArg, [string]$expectedHead, [bool]$requireMeta = $false, [string]$expectedOut = '', [string]$expectedEvidenceDir = '') {
+    if (-not $reportArg) {
+        if ($requireMeta) { Fail 'critical acceptance requires -ReviewReport pointing to the pass review report' }
+        return @{ path = ''; verdict = '' }
+    }
     $rp = if ([IO.Path]::IsPathRooted($reportArg)) { $reportArg } else { Join-Path $Project $reportArg }
     $rp = [IO.Path]::GetFullPath($rp)
     if (-not (Test-Path -LiteralPath $rp -PathType Leaf)) { Fail "review report not found: $reportArg" }
     $nonEmpty = @([IO.File]::ReadAllLines($rp, [Text.Encoding]::UTF8) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $verdictLine = @($nonEmpty | Select-Object -First 5 | Where-Object { $_ -match '^판정\s*:' }) | Select-Object -First 1
     if (-not $verdictLine -and $nonEmpty.Count) { $verdictLine = $nonEmpty[0] }
-    if (-not $verdictLine -or $verdictLine -match '(?i)(중단|수정\s*후\s*진행)' -or $verdictLine -notmatch '^판정:\s*진행\s*가능(\s*\|\s*높음\s+0\b|$)') {
-        Fail "review report verdict is not pass ($verdictLine)"
+    if (-not $verdictLine -or $verdictLine -match '(?i)(중단|수정\s*후\s*진행)' -or $verdictLine -notmatch '^판정:\s*진행\s*가능\s*\|\s*높음\s+0(\s*\||\s*$)') {
+        Fail "review report verdict is not pass with 높음 0 ($verdictLine)"
     }
-    $commitLine = @($nonEmpty | Select-Object -First 10 | Where-Object { $_ -match '^검토\s*commit\s*:\s*([0-9a-fA-F]{40})\b' }) | Select-Object -First 1
-    if ($commitLine -and $commitLine -match '^검토\s*commit\s*:\s*([0-9a-fA-F]{40})\b') {
+    $commitLines = @($nonEmpty | Select-Object -First 12 | Where-Object { $_ -match '^검토\s*commit\s*:' })
+    if ($commitLines.Count -gt 1) { Fail 'review report has duplicate 검토 commit lines' }
+    if ($commitLines.Count -eq 0) {
+        if ($requireMeta) { Fail 'review report missing 검토 commit line' }
+    } elseif ($commitLines[0] -match '^검토\s*commit\s*:\s*`?([0-9a-fA-F]{40})`?\s*$') {
         if ($Matches[1].ToLowerInvariant() -ne $expectedHead.ToLowerInvariant()) {
             Fail "review report commit ($($Matches[1])) differs from current HEAD ($expectedHead)"
+        }
+    } else {
+        Fail "review report has invalid 검토 commit line ($($commitLines[0]))"
+    }
+    $pathLines = @($nonEmpty | Select-Object -First 12 | Where-Object { $_ -match '^검증\s*경로\s*:' })
+    if ($pathLines.Count -gt 1) { Fail 'review report has duplicate 검증 경로 lines' }
+    if ($pathLines.Count -eq 0) {
+        if ($requireMeta) { Fail 'review report missing 검증 경로 line' }
+    } else {
+        $rawVerifyPath = if ($pathLines[0] -match '^검증\s*경로\s*:\s*(.*)$') { $Matches[1].Trim().Trim('"', "'", '`') } else { '' }
+        if (-not $rawVerifyPath) { Fail 'review report has empty 검증 경로' }
+        $repFull = if ([IO.Path]::IsPathRooted($rawVerifyPath)) { [IO.Path]::GetFullPath($rawVerifyPath) } else { [IO.Path]::GetFullPath((Join-Path $Project $rawVerifyPath)) }
+        if ($expectedOut) {
+            if (-not (Test-Path -LiteralPath $repFull -PathType Container) -or -not (Test-SamePath $rawVerifyPath $expectedOut)) {
+                Fail "review report 검증 경로 ($rawVerifyPath) differs from verified worker run OUT ($expectedOut)"
+            }
+        } elseif ($expectedEvidenceDir) {
+            $evNorm = Normalize-ComparePath $expectedEvidenceDir
+            $repNorm = Normalize-ComparePath $rawVerifyPath
+            $inEv = if ($isWinHost) { $repNorm -ieq $evNorm -or $repNorm.StartsWith("$evNorm/", [StringComparison]::OrdinalIgnoreCase) } else { $repNorm -ceq $evNorm -or $repNorm.StartsWith("$evNorm/", [StringComparison]::Ordinal) }
+            if (-not $inEv -or -not (Test-Path -LiteralPath $repFull)) {
+                Fail "review report 검증 경로 ($rawVerifyPath) must point to existing evidence under handoff/$Id/evidence"
+            }
         }
     }
     return @{ path = $rp; verdict = $verdictLine }
@@ -258,7 +307,9 @@ function Find-LatestWorkerRun {
         $dirs = @(Get-ChildItem -LiteralPath $runsDir -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending)
         foreach ($d in $dirs) {
             $rj = Read-Json (Join-Path $d.FullName 'run.json')
-            if ($rj -and (-not $rj.kind -or $rj.kind -eq 'verify')) { return $rj }
+            if (-not $rj) { continue }
+            if (([string]$rj.result).StartsWith('FAIL')) { return $rj }
+            if (-not $rj.kind -or $rj.kind -eq 'verify') { return $rj }
         }
     }
     $lat = Read-Json (Join-Path $latest 'run.json')
@@ -267,16 +318,21 @@ function Find-LatestWorkerRun {
 }
 
 $reviewInfo = @{ path = ''; verdict = '' }
+$workerRun = $null
 if ($Accept) {
-    if ($approved.review -eq 'critical' -and -not $ReviewedCommit) { Fail 'critical acceptance requires -ReviewedCommit from the review report' }
+    $isCrit = ($approved.review -eq 'critical')
+    if ($isCrit -and -not $ReviewedCommit) { Fail 'critical acceptance requires -ReviewedCommit from the review report' }
+    if ($isCrit -and -not $ReviewReport) { Fail 'critical acceptance requires -ReviewReport pointing to the pass review report' }
     if ($ReviewedCommit -and $ReviewedCommit -cne $head) { Fail 'reviewed commit differs from current HEAD' }
-    $reviewInfo = Validate-ReviewReport $ReviewReport $head
     $stateNow = State
     if ($stateNow.dirty -or $gitErrors.Count) { Fail 'uncommitted or hidden changes (before/after)' }
     $headEpochAccept = 0L; [void][long]::TryParse(((Read-Git @('log', '-1', '--format=%ct')) -join ''), [ref]$headEpochAccept)
     $evAccept = Collect-Evidence $headEpochAccept
 
     if (-not $cmd -and $Manual) {
+        $evDir = Join-Path $task 'evidence'
+        if ($isCrit -and $evAccept.list.Count -eq 0) { Fail "critical manual acceptance requires evidence files under handoff/$Id/evidence" }
+        $reviewInfo = Validate-ReviewReport $ReviewReport $head $isCrit '' $evDir
         $diffCheck = @(Read-Git @('diff', "$($approved.baseCommit)...HEAD"))
         $specHashNow = Spec-Hash
         $manualRec = [ordered]@{
@@ -295,10 +351,13 @@ if ($Accept) {
     if (-not $workerRun -or $workerRun.result -ne 'PASS' -or $workerRun.approval -ne $approved.approval -or $workerRun.commit -ne $head) {
         Fail 'acceptance requires a prior worker PASS on this commit and approval'
     }
-    # Prevent blind re-acceptance without new worker run unless updating -ReviewReport or explicitly passing -Rerun.
-    if ($existingAccepted -and $existingAccepted.approval -eq $approved.approval -and $existingAccepted.commit -eq $head -and $existingAccepted.workerRun -eq $workerRun.run -and -not $ReviewReport -and -not $Rerun) {
-        Clear-Accepted
-        Fail 'acceptance requires a prior worker PASS on this commit and approval (already accepted; pass -ReviewReport to attach a report or -Rerun)'
+    $reviewInfo = Validate-ReviewReport $ReviewReport $head $isCrit ([string]$workerRun.run) ''
+    # Prevent duplicate re-acceptance without destroying the valid existing acceptance (`-CheckAccepted` remains valid).
+    if ($existingAccepted -and $existingAccepted.approval -eq $approved.approval -and $existingAccepted.commit -eq $head -and (Test-SamePath ([string]$existingAccepted.workerRun) ([string]$workerRun.run)) -and -not $Rerun) {
+        $sameRep = (-not $ReviewReport -and -not $existingAccepted.reviewReport) -or ($ReviewReport -and $existingAccepted.reviewReport -and (Test-SamePath ([string]$existingAccepted.reviewReport) ([string]$reviewInfo.path)))
+        if ($sameRep) {
+            Fail 'acceptance requires a prior worker PASS on this commit and approval (already accepted; existing acceptance preserved — pass -Rerun to re-verify)'
+        }
     }
 
     if (-not $Rerun) {
@@ -455,12 +514,39 @@ $summary = @(
 if ($evidenceList.Count) {
     $summary += "EVIDENCE: $($evidenceList.Count) file(s)$(if ($staleEvidence.Count) { "; WARN $($staleEvidence.Count) file(s) older than HEAD commit ($($staleEvidence -join ', '))" } else { ' (all current)' })"
 }
-$summary += @("COMMAND: $cmd", "STARTED: $started", "FINISHED: $finished", "EXIT: $code", "OUT: $out", "RESULT: $result")
+$excerptLines = @()
+if ($code -ne 0 -and $outLines.Count -gt 0) {
+    $nonBlankIdx = @(for ($idx = 0; $idx -lt $outLines.Count; $idx++) {
+        if ($outLines[$idx].Trim()) { $idx }
+    })
+    if ($nonBlankIdx.Count -le 20) {
+        $picked = $nonBlankIdx
+    } else {
+        $errHits = @($nonBlankIdx | Where-Object {
+            $outLines[$_] -match '(?i)(\berror\b|\bfail(ed|ure)?\b|\bexception\b|\bpanic\b|\bfatal\b|\bassert\w*|\bexpected\b|^\s*[✕×✖])'
+        } | Select-Object -First 8)
+        $tailHits = @($nonBlankIdx | Select-Object -Last 12)
+        $picked = @(@($errHits) + @($tailHits) | Select-Object -Unique | Sort-Object)
+    }
+    $excerptLines = @($picked | ForEach-Object {
+        $lineTxt = $outLines[$_]
+        if ($lineTxt.Length -gt 240) { $lineTxt = $lineTxt.Substring(0, 240) + '...' }
+        "  [L$($_ + 1)] $lineTxt"
+    })
+    if ($excerptLines.Count) { Save 'failure-excerpt.txt' $excerptLines }
+}
+
+$summary += @("COMMAND: $cmd", "STARTED: $started", "FINISHED: $finished", "EXIT: $code", "OUT: $out")
+if ($excerptLines.Count) {
+    $summary += "FAILURE-EXCERPT: $($excerptLines.Count) of $($outLines.Count) line(s) (full output in output.txt)"
+    $summary += $excerptLines
+}
+$summary += "RESULT: $result"
 Save 'summary.txt' $summary
 $record = [ordered]@{
     kind=$(if ($Accept) { 'accept' } else { 'verify' })
     result=$result; commit=$head; approval=$approved.approval; handoffHash=$handoffHash; specHash=$specHash
-    command=$cmd; run=$out; workerRun=$(if ($Accept) { $out } else { $out }); reviewedCommit=$ReviewedCommit
+    command=$cmd; run=$out; workerRun=$(if ($Accept -and $workerRun) { [string]$workerRun.run } else { $out }); reviewedCommit=$ReviewedCommit
     reviewReport=$reviewInfo.path; reviewVerdict=$reviewInfo.verdict; evidence=$evidenceList
 }
 Write-Json (Join-Path $out 'run.json') $record

@@ -32,7 +32,7 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
 - 목적:
 - 읽을 것(절대경로, 우선순위 순):
 - (빈틈 검토) 사용자 요구 원문: / 스펙이 가리키는 코드 파일:
-- (완료 전 검토) 인계 파일: / 자동 검증이면 summary.txt의 OUT 폴더 내 summary.txt·output.txt·changed.txt·test-changes.txt·diff.patch 경로와 전체 commit(worktree 작업이면 `.worktrees/<소문자 id>/` 아래 소스 경로): / 수동 조건 확인 방법과 증거 경로:
+- (완료 전 검토) 인계 파일: / 작업자 보고 파일(handoff/<ID>-report.md): / 자동 검증이면 summary.txt의 OUT 폴더 내 summary.txt·output.txt·changed.txt·test-changes.txt·diff.patch 경로와 전체 commit(worktree 작업이면 `.worktrees/<소문자 id>/` 아래 소스 경로): / 수동 검증이면 대상 HEAD 40자 해시(`git rev-parse HEAD`), 확인 방법, `handoff/<ID>/evidence/` 경로:
 - (조사) 알고 싶은 것: / 허용하는 명령·사이트:
 - 금지: 지정 보고 파일과 handoff/<stem>/ 밖 쓰기, 상태를 바꾸는 명령
 - 보고 파일: <절대경로>
@@ -52,8 +52,9 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
   2. 실행(연속 AGY 실행 시 최소 30초 간격 준수):
      `$env:AGENTKIT_ROLE='<stem>'; agy -p --model <모델> --mode plan --sandbox --disable-slash-commands --settings "<프로젝트 폴더>/handoff/<stem>/settings.json" "Read <프로젝트 폴더>/handoff/<stem>.md and follow it."`
 - **검토 · Codex (헤드리스)**:
-  `handoff/<stem>/` 폴더를 먼저 만들고 보고 경로를 `handoff/<stem>/<stem>-report.md`로 지정한 뒤 실행한다:
-  `$env:AGENTKIT_ROLE='<stem>'; codex exec [-m <모델>] -c default_permissions=cell_review -c "permissions.cell_review.filesystem={\":root\"=\"read\",\"<프로젝트 폴더>/handoff/<stem>\"=\"write\"}" -c permissions.cell_review.network.enabled=false -c web_search=disabled "Read handoff/<stem>.md and follow it."`
+  `handoff/<stem>/` 폴더를 먼저 만들고 보고 경로를 `handoff/<stem>/<stem>-report.md`로 지정한 뒤 실행한다(비터미널 파이프에서 `codex exec`가 표준 입력 EOF를 기다리며 멈추지 않게 하고, 공백 포함 경로에서도 설정 인자가 깨지지 않도록 아래 형식을 지킨다):
+  - Windows PowerShell: `$env:AGENTKIT_ROLE='<stem>'; $null | codex exec --ephemeral [-m <모델>] -c default_permissions=cell_review -c 'permissions.cell_review.filesystem={":root"="read","<프로젝트 폴더>/handoff/<stem>"="write"}' -c permissions.cell_review.network.enabled=false -c web_search=disabled "Read handoff/<stem>.md and follow it."`
+  - macOS·Linux (`sh`/`bash`): `AGENTKIT_ROLE=<stem> codex exec --ephemeral [-m <모델>] -c default_permissions=cell_review -c 'permissions.cell_review.filesystem={":root"="read","<프로젝트 폴더>/handoff/<stem>"="write"}' -c permissions.cell_review.network.enabled=false -c web_search=disabled "Read handoff/<stem>.md and follow it." < /dev/null`
 - **브라우저 대화형 조사 · Antigravity (`hc run` 전용)**:
   외부 웹 브라우저 조작·캡처가 꼭 필요할 때만 `handoff/<stem>/settings.json`(프로젝트·`<stem>` 폴더 읽기/쓰기 및 필요한 브라우저 MCP만 명시 허용)을 준비하고 `hc run --bg --no-notify --env AGENTKIT_ROLE=<stem> --name <stem> --cwd <프로젝트 폴더> '--' agy --model <모델> --mode plan --sandbox --settings "<프로젝트 폴더>/handoff/<stem>/settings.json" --log-file "<프로젝트 폴더>/handoff/<stem>.log" -i "Read <프로젝트 폴더>/handoff/<stem>.md and follow it."`로 실행한다(`manual` 모드면 사용자에게 실행 요청).
 
