@@ -1,33 +1,31 @@
-// Regression test for hooks/pre-push and the Git steps of init.ps1 (submission policy). Run: node <agent-kit>/hooks/pre-push.test.mjs
-// Everything happens in a throwaway temp folder: bare "remotes" plus clones. Pushes only go to those temp remotes.
+// Regression test for hooks/pre-push and init.ps1 (submission policy, TrackSpec, moved-path refresh, sub-repo projectRoot).
 import { execSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const KIT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const IS_WIN = process.platform === 'win32';
+const PWSH = IS_WIN ? 'powershell' : 'pwsh';
+const PWSH_BASE = IS_WIN ? ['-NoProfile', '-ExecutionPolicy', 'Bypass'] : ['-NoProfile'];
 const TMP = mkdtempSync(join(tmpdir(), 'prepushtest-'));
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
-// Every git and init call here sees a global config that says submission=direct: repos without a local policy must
-// ignore it (init, the hook and the guard read the repository's own config only).
 process.env.GIT_CONFIG_GLOBAL = join(TMP, 'global.gitconfig');
 writeFileSync(process.env.GIT_CONFIG_GLOBAL, '[agentkit]\n\tsubmission = direct\n\tprotectedBranches = nothing\n');
 const sh = (c, cwd) => execSync(c, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
 const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
-const initR = (...a) => spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'init.ps1'), ...a], { encoding: 'utf8' });
+const initR = (...a) => spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'init.ps1'), ...a], { encoding: 'utf8' });
 const init = (...a) => initR(...a).stdout;
-// init with extra git config for that one run only (GIT_CONFIG_COUNT/KEY/VALUE, read by every git call init makes)
 const initC = (kv, ...a) => {
   const env = { ...process.env, GIT_CONFIG_COUNT: String(kv.length) };
   kv.forEach(([k, v], n) => { env[`GIT_CONFIG_KEY_${n}`] = k; env[`GIT_CONFIG_VALUE_${n}`] = v; });
-  return spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'init.ps1'), ...a], { encoding: 'utf8', env });
+  return spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'init.ps1'), ...a], { encoding: 'utf8', env });
 };
 const author = (cwd) => git(['log', '-1', '--format=%an <%ae>'], cwd).stdout.trim();
 const id = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 const cfg = (key, cwd) => git(['config', '--local', '--get', key], cwd).stdout.trim();
 const hookOf = (cwd) => sh('git rev-parse --path-format=absolute --git-path hooks', cwd).trim() + '/pre-push';
 
-// A clone of a fresh bare remote with main pushed (before any hook exists) and a work branch feat.
 function mk(name) {
   const dir = `${TMP}/${name}`;
   sh(`git init -q --bare -b main "${TMP}/${name}.git"`);
@@ -35,21 +33,21 @@ function mk(name) {
   sh('git checkout -q -b main', dir);
   git([...id, 'commit', '-q', '--allow-empty', '-m', 'init'], dir);
   git(['push', '-q', 'origin', 'main'], dir);
-  git([...id, 'commit', '-q', '--allow-empty', '-m', 'main ahead'], dir);   // main has something new to push
+  git([...id, 'commit', '-q', '--allow-empty', '-m', 'main ahead'], dir);
   sh('git checkout -q -b feat', dir);
   git([...id, 'commit', '-q', '--allow-empty', '-m', 'feat'], dir);
   return dir;
 }
-const REPO = mk('repo');         // pr with the default protected branch
-const DIRECT = mk('direct');     // direct, later with develop protected, then switched to pr
-const LOCAL = mk('local');       // local: no pushes at all
-const DEV = mk('dev');           // pr where origin/HEAD points at develop
-const OLD = mk('old');           // older setup: agent-kit hook, no policy
+const REPO = mk('repo');
+const DIRECT = mk('direct');
+const LOCAL = mk('local');
+const DEV = mk('dev');
+const OLD = mk('old');
 sh('git branch develop', DEV); git(['push', '-q', 'origin', 'develop'], DEV); sh('git remote set-head origin develop', DEV);
 sh('git branch develop', DIRECT);
 writeFileSync(hookOf(OLD), readFileSync(join(KIT, 'hooks', 'pre-push'), 'utf8'));
-sh(`git init -q -b main "${TMP}/fresh"`);   // no commits yet (only -GitSetup touches it, so it stays commitless)
-sh(`git init -q -b main "${TMP}/fresh2"`);  // no commits yet; full init gives it a baseline
+sh(`git init -q -b main "${TMP}/fresh"`);
+sh(`git init -q -b main "${TMP}/fresh2"`);
 sh(`git init -q -b main "${TMP}/husky"`); sh('git config core.hooksPath .husky', `${TMP}/husky`);
 sh(`git init -q -b main "${TMP}/own"`); writeFileSync(`${TMP}/own/.git/hooks/pre-push`, '#!/bin/sh\necho mine\n');
 mkdirSync(`${REPO}/sub`); mkdirSync(`${TMP}/plain`);
@@ -58,18 +56,17 @@ const push = (args, cwd = REPO) => git(['push', '-q', 'origin', ...args], cwd);
 const blocked = (r) => r.status !== 0 && /agent-kit pre-push\] blocked/.test(r.stderr);
 const setup0 = init('-GitSetup', '-Target', REPO);
 const cases = [
-  // no submission chosen: instructions + exclude only, no new hook
   ['미선택: 정책 없으면 훅을 설치하지 않고 설계자에게 안내', () => /PRE-PUSH: skipped \(no agentkit\.submission/.test(setup0) && /POLICY: none .*Designer/.test(setup0)
     && /GIT-EXCLUDE: added/.test(setup0) && !existsSync(hookOf(REPO))],
-  ['미선택: 커밋 없는 저장소에 전체 init → 빈 baseline + 지침 복사+exclude, 정책·훅 없음', () => {
+  ['미선택: 커밋 없는 저장소에 전체 init → 빈 baseline + 지침 복사+exclude(CLAUDE/GEMINI 중복 래퍼 미생성), 정책·훅 없음', () => {
     const F = `${TMP}/fresh2`;
     const o = init('-Target', F);
     return /GIT: baseline commit created \(main; the repository had no commits\)/.test(o) && /CREATED: (?!-)/.test(o) && /GIT-EXCLUDE: added/.test(o)
       && /PRE-PUSH: skipped \(no agentkit\.submission/.test(o) && !existsSync(hookOf(F)) && !cfg('agentkit.submission', F)
+      && existsSync(`${F}/AGENTS.md`) && !existsSync(`${F}/CLAUDE.md`) && !existsSync(`${F}/GEMINI.md`)
       && git(['rev-parse', '--verify', 'HEAD'], F).status === 0 && git(['ls-tree', 'HEAD'], F).stdout.trim() === ''
       && author(F) === 'agent-kit <agent-kit@local>';
   }],
-  // pr (default protected branch = existing main)
   ['pr: 정책 저장 + 훅 설치 + 이전→새 값 출력', () => {
     const o = init('-GitSetup', '-Submission', 'pr', '-Target', REPO);
     return /POLICY: submission=pr \(was -\), protectedBranches=main \(was -\)/.test(o) && /PRE-PUSH: installed/.test(o)
@@ -93,11 +90,9 @@ const cases = [
   }],
   ['옛 이름 -ExcludeOnly도 동작', () => /PRE-PUSH: already present/.test(init('-ExcludeOnly', '-Target', REPO))],
   ['-Base 저장, 다른 값은 보존', () => /submission=pr, protectedBranches=main, base=origin\/main \(was -\)/.test(init('-GitSetup', '-Base', 'origin/main', '-Target', REPO)) && cfg('agentkit.base', REPO) === 'origin/main'],
-  // pr with origin/HEAD -> develop
   ['pr 기본값: origin/HEAD의 브랜치(develop)', () => /protectedBranches=develop \(was -\)/.test(init('-GitSetup', '-Submission', 'pr', '-Target', DEV))],
   ['차단: develop 보호', () => { git([...id, 'commit', '-q', '--allow-empty', '-m', 'more'], DEV); return blocked(push(['feat:develop'], DEV)); }],
   ['허용: 보호 목록에 없는 main', () => push(['main'], DEV).status === 0],
-  // direct
   ['direct: 기본 보호 없음', () => /submission=direct \(was -\), protectedBranches=-, /.test(init('-GitSetup', '-Submission', 'direct', '-Target', DIRECT))],
   ['허용: direct에서 main push', () => push(['main'], DIRECT).status === 0],
   ['direct + -ProtectedBranches develop만 주면 목록만 바뀜', () => {
@@ -124,15 +119,26 @@ const cases = [
     rmSync(`${DIRECT}/handoff`, { recursive: true, force: true });
     return ok;
   }],
-  // local
+  ['하위 폴더 저장소(-ProjectRoot): 상위 폴더의 handoff/approved.json도 direct pre-push가 검증', () => {
+    const extProj = `${TMP}/ext-proj`;
+    mkdirSync(`${extProj}/handoff/T99`, { recursive: true });
+    writeFileSync(`${extProj}/handoff/T99/approved.json`, '{"version":1}\n');
+    init('-GitSetup', '-Submission', 'direct', '-ProjectRoot', extProj, '-Target', DIRECT);
+    git([...id, 'commit', '-q', '--allow-empty', '-m', 'subrepo check'], DIRECT);
+    const blk = blocked(push(['feat:main'], DIRECT));
+    const sha = git(['rev-parse', 'feat'], DIRECT).stdout.trim();
+    writeFileSync(`${extProj}/handoff/T99/accepted.json`, JSON.stringify({ commit: sha }) + '\n');
+    const ok = push(['feat:main'], DIRECT).status === 0;
+    init('-GitSetup', '-ProjectRoot', '', '-Target', DIRECT);
+    rmSync(extProj, { recursive: true, force: true });
+    return blk && ok;
+  }],
   ['local: 정책 저장', () => /submission=local \(was -\)/.test(init('-GitSetup', '-Submission', 'local', '-Target', LOCAL))],
   ['차단: local에서 작업 브랜치 push', () => blocked(push(['feat'], LOCAL))],
   ['차단: local worktree에서 push (정책 공유)', () => { sh('git worktree add -q .worktrees/t02 -b t02', LOCAL); return blocked(push(['t02'], `${LOCAL}/.worktrees/t02`)); }],
-  // older setup: hook without policy keeps blocking main/master
   ['옛 환경: 정책 없는 훅도 main 차단', () => blocked(push(['main'], OLD))],
   ['옛 환경: 정책 없는 훅도 master 차단', () => blocked(push(['feat:master'], OLD))],
   ['옛 환경: 작업 브랜치 push 허용', () => push(['feat'], OLD).status === 0],
-  // skips and preservation
   ['건너뜀: 저장소 하위 폴더 (부모 저장소 설정 안 바꿈)', () => {
     const o = init('-GitSetup', '-Submission', 'local', '-Target', `${REPO}/sub`);
     return /PRE-PUSH: skipped \(not the repository root/.test(o) && /POLICY: skipped \(not the repository root/.test(o) && cfg('agentkit.submission', REPO) === 'pr';
@@ -215,6 +221,15 @@ const cases = [
     return r.status === 0 && /GIT: initialized \(main, baseline commit\)/.test(r.stdout) && /GIT-EXCLUDE: added/.test(r.stdout)
       && head.status === 0 && existsSync(ex) && readFileSync(ex, 'utf8').includes('/agent-roles/') && ignored.status === 0 && pathsResolved;
   }],
+  ['-TrackSpec 옵션: AGENTS.md·SPEC.md·agent-roles/는 Git 추적 허용하고 handoff/만 제외', () => {
+    const TSDIR = `${TMP}/trackspec-proj`;
+    mkdirSync(TSDIR);
+    const r = initR('-Target', TSDIR, '-TrackSpec');
+    const specIgnored = git(['check-ignore', 'SPEC.md'], TSDIR).status === 0;
+    const agentsIgnored = git(['check-ignore', 'AGENTS.md'], TSDIR).status === 0;
+    const handoffIgnored = git(['check-ignore', 'handoff/T01.md'], TSDIR).status === 0;
+    return r.status === 0 && !specIgnored && !agentsIgnored && handoffIgnored && cfg('agentkit.trackSpec', TSDIR) === 'true';
+  }],
   ['새 빈 폴더에 -NoGit으로 전체 init 실행: Git 초기화 생략', () => {
     const NOGIT = `${TMP}/nogit-init`;
     mkdirSync(NOGIT);
@@ -270,7 +285,7 @@ const cases = [
   }],
   ['local-defaults 격리: AGENTKIT_DEFAULTS_FILE=off이면 한글 기본 자리표시자로 치환되고 미치환 <default-*>가 남지 않음', () => {
     const P = `${TMP}/def-off`; mkdirSync(P);
-    const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'init.ps1'), '-Target', P, '-NoGit'],
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'init.ps1'), '-Target', P, '-NoGit'],
       { encoding: 'utf8', env: { ...process.env, AGENTKIT_DEFAULTS_FILE: 'off' } });
     const ag = readFileSync(`${P}/AGENTS.md`, 'utf8');
     return r.status === 0 && !/<(agent-kit|hc-prefix|default-[a-z-]+)>/.test(ag) && ag.includes('설계자 도구·모델');
@@ -280,44 +295,52 @@ const cases = [
     const goodJson = `${TMP}/good-defaults.json`, badJson = `${TMP}/bad-defaults.json`;
     writeFileSync(goodJson, JSON.stringify({ designer: 'MyDesigner|v1\nline2', worker: 'Worker at <agent-kit>' }));
     writeFileSync(badJson, '{ broken json ');
-    const r1 = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'init.ps1'), '-Target', P1, '-NoGit'],
+    const r1 = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'init.ps1'), '-Target', P1, '-NoGit'],
       { encoding: 'utf8', env: { ...process.env, AGENTKIT_DEFAULTS_FILE: goodJson } });
-    const r2 = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'init.ps1'), '-Target', P2, '-NoGit'],
+    const r2 = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'init.ps1'), '-Target', P2, '-NoGit'],
       { encoding: 'utf8', env: { ...process.env, AGENTKIT_DEFAULTS_FILE: badJson } });
     const ag1 = readFileSync(`${P1}/AGENTS.md`, 'utf8');
     const kitPosix = KIT.replace(/\\/g, '/').replace(/\/+$/, '');
     return r1.status === 0 && ag1.includes('MyDesigner/v1 line2') && ag1.includes(`Worker at ${kitPosix}`) && !ag1.includes('<agent-kit>')
       && r2.status === 0 && /DEFAULTS: WARN invalid JSON/.test(r2.stdout);
   }],
-  ['기존 프로젝트 재실행: SKIPPED 파일 안의 옛 skills/antigravity-delegate/ 경로를 skills/agent-delegate/로 자동 갱신', () => {
+  ['기존 프로젝트 재실행: 옮겨진 옛 agent-kit 절대경로 및 skills/antigravity-delegate/ 경로 자동 갱신', () => {
     const P = `${TMP}/legacy-proj`; mkdirSync(P);
     initR('-Target', P, '-NoGit');
     const wf = `${P}/agent-roles/WORKER.md`;
-    writeFileSync(wf, readFileSync(wf, 'utf8').replace('/skills/agent-delegate/', '/skills/antigravity-delegate/'));
+    const kitPosix = KIT.replace(/\\/g, '/').replace(/\/+$/, '');
+    writeFileSync(wf, readFileSync(wf, 'utf8')
+      .replace('/skills/agent-delegate/', '/skills/antigravity-delegate/')
+      .replaceAll(kitPosix, 'D:/old-location/agent-kit'));
     const r = initR('-Target', P, '-NoGit');
     const updated = readFileSync(wf, 'utf8');
     return r.status === 0 && /UPDATED \(placeholders\/paths refreshed\): agent-roles\/WORKER\.md/.test(r.stdout)
-      && updated.includes('/skills/agent-delegate/') && !updated.includes('/skills/antigravity-delegate/');
+      && updated.includes('/skills/agent-delegate/') && !updated.includes('/skills/antigravity-delegate/')
+      && updated.includes(`${kitPosix}/verify.ps1`) && !updated.includes('D:/old-location/agent-kit');
   }],
-  ['check-tools 훅 무결성 점검(AgentShield 스타일): 미치환 <agent-kit> 또는 guard.mjs 누락 시 [hooks: WARN ...] 출력', () => {
-    const H1 = `${TMP}/home-placeholder`, H2 = `${TMP}/home-missing`, H3 = `${TMP}/home-ok`;
+  ['check-tools 훅 무결성 점검: 미치환 <agent-kit>, guard.mjs 누락, disableAllHooks 비활성화 시 WARN 출력', () => {
+    const H1 = `${TMP}/home-placeholder`, H2 = `${TMP}/home-missing`, H3 = `${TMP}/home-ok`, H4 = `${TMP}/home-disabled`;
     mkdirSync(`${H1}/.codex`, { recursive: true });
     writeFileSync(`${H1}/.codex/hooks.json`, '{"command":"node <agent-kit>/hooks/guard.mjs"}');
     mkdirSync(`${H2}/.claude`, { recursive: true });
     writeFileSync(`${H2}/.claude/settings.json`, '{"hooks":{}}');
     mkdirSync(`${H3}/.codex`, { recursive: true });
     writeFileSync(`${H3}/.codex/hooks.json`, '{"command":"node /opt/agent-kit/hooks/guard.mjs"}');
-    const runChk = (h) => spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'check-tools.ps1')],
+    mkdirSync(`${H4}/.claude`, { recursive: true });
+    writeFileSync(`${H4}/.claude/settings.json`, '{"disableAllHooks":true,"command":"node /opt/agent-kit/hooks/guard.mjs"}');
+    const runChk = (h) => spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'check-tools.ps1')],
       { encoding: 'utf8', env: { ...process.env, AGENTKIT_HOME: h } }).stdout;
     return /\[hooks: WARN codex hook has unresolved <agent-kit> placeholder/.test(runChk(H1))
       && /\[hooks: WARN claude config has no guard\.mjs hook registered/.test(runChk(H2))
-      && !/\[hooks: WARN/.test(runChk(H3));
+      && !/\[hooks: WARN/.test(runChk(H3))
+      && /\[hooks: WARN claude guard\.mjs hook is disabled/.test(runChk(H4));
   }],
 ];
 let bad = 0;
 for (const [name, fn] of cases) {
-  let ok = false; try { ok = fn(); } catch (e) { ok = false; }
+  let ok = false, errNote = '';
+  try { ok = fn(); } catch (e) { ok = false; errNote = '\n  ' + String(e.message || e); }
   if (!ok) bad++;
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${errNote}`);
 }
 console.log(bad ? `${bad} FAIL` : 'ALL PASS'); process.exit(bad ? 1 : 0);

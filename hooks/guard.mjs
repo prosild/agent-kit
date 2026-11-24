@@ -1,48 +1,26 @@
 // PreToolUse guard for Claude Code, Codex and Antigravity. A guard rail against mistakes, NOT a sandbox and not an
-// enforcement boundary: it matches command text, so a determined or unusual command shape can still get past it
-// (see RUNBOOK 9). It blocks secret-file access, pushes the repository's submission policy forbids (local Git config
-// agentkit.* written by init.ps1, read the same way as hooks/pre-push; main/master when unset) and skipping that hook,
-// permission-bypass flags, and edits to the hook files themselves.
-// Claude/Codex send JSON on stdin with tool_name/tool_input/cwd. A PreToolUse event is blocked with the shared
-// hookSpecificOutput.permissionDecision="deny" JSON on stdout and exit 0: Codex runs hooks through the session shell
-// (powershell -Command), which turns exit 2 into 1, and Codex treats 1 as a failed hook that does not block.
-// Other callers (no hook_event_name) still get stderr + exit 2.
-// Claude tools: Read/Edit/Write/NotebookEdit/Grep/Glob/Bash/PowerShell. Codex tools: Bash (shell, incl. exec_command)
-// and apply_patch (tool_input.command = patch text).
-// Antigravity (agy) sends camelCase { toolCall: { name, args }, cwd, lastUserInput, ... }
-// and reads stdout: {"decision":"deny","reason":...} blocks, {"decision":"allow"} auto-approves, empty stdout = no opinion
-// (normal permission rules). `{}` without a decision is treated as deny, and a non-zero exit as a failed hook that also
-// blocks, so this script prints nothing to pass. Tools: read_file{Path}, write_file{Path,Content},
-// edit_file{Path,Target,Replacement}, run_command{CommandLine}.
-// Registered in ~/.claude/settings.json, ~/.codex/hooks.json and ~/.gemini/config/hooks.json.
-// Fails open on unparsable input.
+// enforcement boundary: real isolation comes from repository branch protection, token scopes and native CLI sandboxes/profiles
+// (see RUNBOOK 9). It blocks secret-file access, pushes forbidden by local Git config `agentkit.*` (same keys as hooks/pre-push),
+// skipping that hook, permission/hook-bypass flags, cross-role boundary violations, and edits to hook/config/evidence files.
 import { execSync, execFileSync } from 'node:child_process';
 import { resolve, join, dirname } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-const SECRET = /(^|[\\/])(\.env(\.[\w-]+)*|\.credentials\.json|credentials\.json|oauth_creds\.json|mcp_oauth_tokens\.json|mcp_config\.json|\.npmrc|_?\.netrc|_netrc|\.git-credentials|\.claude\.json|id_(rsa|ed25519|ecdsa|dsa)|[^\\/]+\.(pem|p12|pfx|key|jks|keystore))$/i;
-// Test credentials / browser session files. Viewing or copying their contents is blocked (Read/Edit, viewer/copy commands);
-// creating them (Write) and passing them to test tools (curl -b, node, python, playwright) is allowed.
-// "test" must start a word (latest-accounts.json and contest_account.json are ordinary files).
+const SECRET = /(^|[\\/])(\.env(\.[\w-]+)*|\.credentials\.json|credentials\.json|oauth_creds\.json|mcp_oauth_tokens\.json|mcp_config\.json|application_default_credentials\.json|ConsoleHost_history\.txt|\.(bash|zsh)_history|\.pypirc|\.npmrc|_?\.netrc|_netrc|\.git-credentials|\.claude\.json|terraform\.tfstate(\.backup)?|id_(rsa|ed25519|ecdsa|dsa)|[^\\/]+\.(pem|p12|pfx|key|jks|keystore))$/i;
 const TEST_CRED = /(^|[\\/])([^\\/]*(?<![a-z0-9])test[-_]?accounts?[^\\/]*\.json|[^\\/]*(?:cookies?\.txt|\.cookies?)|[^\\/]*storage[-_]?state[^\\/]*\.json)$/i;
-// Commands whose main job is to show file contents (subset of READERS without copy/transfer/interpreters).
 const VIEWERS = /^(cat|type|head|tail|less|more|gc|get-content|select-string|sls|base64|grep|rg|findstr|awk|sed|diff|certutil|xxd|od|strings|sort|nl|tac)$/i;
-// Secrets recognised by folder + name (a plain auth.json / credentials / hosts.yml elsewhere is allowed).
-const SECRET_DIR = /(^|[\\/])(\.codex[\\/]auth\.json|\.aws[\\/]credentials|\.docker[\\/]config\.json|\.kube[\\/]config|(gh|GitHub CLI)[\\/]hosts\.yml)$/i;
-// Not secrets: env templates and source/doc files that merely have .env in the name (.env.example, .env.d.ts, .env.md).
-const SECRET_OK = /\.env(\.[\w-]+)*\.(example|sample|template|defaults|dist|schema|md|ts|js|mjs|cjs)$/i;
-// Codex equivalents (codex --help): -s/--sandbox danger-full-access, -a/--ask-for-approval never, the same keys given as
-// -c config overrides, and --dangerously-bypass-hook-trust. --yolo is not in --help but is blocked in case it is a hidden alias.
-const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access/i;
-// First word of a command segment that reads or copies file contents.
-const READERS = /^(cat|type|head|tail|less|more|gc|get-content|select-string|sls|copy|copy-item|cp|scp|mv|move|move-item|ren|rename-item|curl|base64|grep|rg|findstr|awk|sed|diff|certutil|xxd|od|strings|sort|nl|tac|node|python|python3|py|powershell|pwsh)$/i;
-// Commands that delete, move or overwrite the files named in their arguments (checked against the protected files below).
-const MUTATORS = /^(rm|del|erase|rd|rmdir|remove-item|ri|mv|move|move-item|mi|ren|rename|rename-item|rni|set-content|add-content|clear-content|out-file|tee|tee-object|truncate|cp|copy|copy-item|cpi)$/i;
+const SECRET_DIR = /(^|[\\/])(\.codex[\\/]auth\.json|\.aws[\\/]credentials|\.docker[\\/]config\.json|\.kube[\\/]config|(gh|GitHub CLI)[\\/]hosts\.yml|\.ssh[\\/](?!known_hosts(?:\.old)?$|[^\\/]+\.pub$)[^\\/]+|\.cargo[\\/]credentials(?:\.toml)?|\.m2[\\/]settings\.xml)$/i;
+// Non-secret env templates, source/doc files, and committed non-local `.env.test` / `.env.ci` defaults.
+const SECRET_OK = /(\.env(\.[\w-]+)*\.(example|sample|template|defaults|dist|schema|md|ts|js|mjs|cjs)|(^|[\\/])\.env\.(test|ci))$/i;
+// Permission & hook-bypass flags across Claude, Codex, and Antigravity (including Claude's --bare / --safe-mode / user-less --setting-sources).
+const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|--bare\b|--safe-mode\b|--setting-sources(?:[ =]+)["']?(?![^"'\s]*\buser\b)[a-z,]+|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access/i;
+const READERS = /^(cat|type|head|tail|less|more|gc|get-content|import-csv|convertfrom-stringdata|select-string|sls|copy|copy-item|cp|scp|mv|move|move-item|ren|rename-item|curl|base64|grep|rg|findstr|awk|sed|diff|certutil|xxd|od|strings|sort|nl|tac|node|python|python3|py|powershell|pwsh)$/i;
+const MUTATORS = /^(rm|del|erase|rd|rmdir|remove-item|ri|mv|move|move-item|mi|ren|rename|rename-item|rni|new-item|ni|set-content|sc|add-content|ac|clear-content|clc|out-file|tee|tee-object|truncate|cp|copy|copy-item|cpi)$/i;
 
-let AGY = false;   // true when the caller is Antigravity (decision JSON on stdout instead of exit 2)
-let PRE = false;   // true for a Claude/Codex PreToolUse event (permissionDecision JSON on stdout, exit 0)
+let AGY = false;
+let PRE = false;
 function block(msg) {
   const text = `[guard] 차단: ${msg}. 우회하지 말고 상위에 보고하세요.`;
   if (AGY) { process.stdout.write(JSON.stringify({ decision: 'deny', reason: text })); process.exit(0); }
@@ -54,8 +32,6 @@ function block(msg) {
 }
 function autoAllow(reason) { process.stdout.write(JSON.stringify({ decision: 'allow', reason })); process.exit(0); }
 
-// Absolute, '..'-free, forward-slash, lower-case form of a path seen from the session folder (so that
-// handoff/<stem>/../../x cannot pass as the stem's own folder).
 function absPath(base, p) { return resolve(base || process.cwd(), String(p || '')).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); }
 function realAbsPath(base, p) {
   const full = resolve(base || process.cwd(), String(p || ''));
@@ -75,40 +51,93 @@ function realAbsPath(base, p) {
   }
   return full.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
-function norm(p) { return String(p).trim().replace(/^["'`]+|["'`,]+$/g, '').replace(/::\$DATA$/i, '').replace(/[. ]+$/, ''); }
+// Preserve '.' and '..' path segments while stripping quotes, NTFS ADS suffixes, and Windows trailing dots/spaces on filenames.
+function norm(p) {
+  const s = String(p).trim().replace(/^["'`]+|["'`,]+$/g, '').replace(/::\$DATA$/i, '');
+  if (/^(?:.*[\\/])?\.{1,2}$/.test(s)) return s;
+  return s.replace(/[. ]+$/, '');
+}
 function reEsc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-// ---- Antigravity sub-session scope -------------------------------------------------------------------------------
-// Scope applies to an explicit task-file instruction, not a report-path mention in ordinary work.
-// Launches and follow-ups use "Read <task path> and follow it." (also inside /plan and hc wrappers).
-// - review session: only the read tools in REVIEW_READ and its own files (<stem>-report.md, <stem>/...) may be used;
-//   everything else (shell, MCP, browser, unknown tools) is denied, so read-only is an allow-list.
-// - research session: keeps the normal approval rules, but may not write other files under handoff/ (handoff files,
-//   reports and verify evidence of other runs).
-// - the session's own files are auto-allowed only when the input STARTS with "Read …", not when the name is merely
-//   quoted somewhere. Auto-allow is honoured by agy in auto mode; a plan-mode session still asks (RUNBOOK 9).
-// If a person types something else into the session, lastUserInput no longer names the file and the scope ends. Review
-// sessions use --mode plan and session settings so an out-of-scope turn still asks for approval.
+function atomicWriteJson(path, obj) {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmp, JSON.stringify(obj) + '\n');
+    try { renameSync(tmp, path); }
+    catch {
+      writeFileSync(path, JSON.stringify(obj) + '\n');
+      try { unlinkSync(tmp); } catch {}
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---- Antigravity sub-session scope (persisted by conversationId across follow-up turns) ---------------------------
+function agySessionCachePath() {
+  if (process.env.AGENT_GUARD_TEST) return null;
+  const base = process.platform === 'win32'
+    ? (process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'))
+    : join(homedir(), '.cache');
+  return join(base, 'agent-kit', 'agy-subsessions.json');
+}
+function rememberAgySubSession(convId, info) {
+  const p = agySessionCachePath();
+  if (!p || !convId) return;
+  try {
+    let map = {};
+    if (existsSync(p)) {
+      try { map = JSON.parse(readFileSync(p, 'utf8')) || {}; } catch { map = {}; }
+    }
+    const cutoff = Date.now() - 86_400_000;
+    for (const [k, v] of Object.entries(map)) {
+      if (!v || typeof v.ts !== 'number' || v.ts < cutoff) delete map[k];
+    }
+    map[convId] = { stem: info.stem, review: info.review, ts: Date.now() };
+    atomicWriteJson(p, map);
+  } catch {}
+}
+function recallAgySubSession(convId) {
+  const p = agySessionCachePath();
+  if (!p || !convId || !existsSync(p)) return null;
+  try {
+    const map = JSON.parse(readFileSync(p, 'utf8')) || {};
+    const hit = map[convId];
+    if (hit && typeof hit.stem === 'string') return { stem: hit.stem, review: !!hit.review, anchored: false };
+  } catch {}
+  return null;
+}
+
 function subSession(ev) {
   const input = String(ev.lastUserInput || '');
   const m = /handoff[\\/]((?:sub|agy)-[a-z0-9_.-]+-(?:review|research|flash)-\d+)\.md(?![\w.-])/i.exec(input);
-  if (!m) return null;
-  const stem = m[1].toLowerCase();
-  const anchored = /^\s*(?:\/[\w-]+\s+)?(?:<hc\b[^>]*>\s*)?["'`]*Read\s/i.test(input);
-  const prefix = input.slice(0, m.index);
-  const suffix = input.slice(m.index + m[0].length);
-  const directive = anchored && /^\s*(?:\/[\w-]+\s+)?(?:<hc\b[^>]*>\s*)?["'`]*Read\s+["'`]?[^\r\n"'`]*$/i.test(prefix)
-    && /^["'`]?\s+and follow it\./i.test(suffix);
-  const koreanDirective = /^\s*(?:[A-Za-z]:[\\/]|\/)?[^\s"'`]*$/.test(prefix) && /^를 다시 읽고 따라/.test(suffix);
-  if (!directive && !koreanDirective) return null;
-  return { stem, review: /-review-\d+/.test(stem), anchored };
+  if (m) {
+    const stem = m[1].toLowerCase();
+    const anchored = /^\s*(?:\/[\w-]+\s+)?(?:<hc\b[^>]*>\s*)?["'`]*Read\s/i.test(input);
+    const prefix = input.slice(0, m.index);
+    const suffix = input.slice(m.index + m[0].length);
+    const directive = anchored && /^\s*(?:\/[\w-]+\s+)?(?:<hc\b[^>]*>\s*)?["'`]*Read\s+["'`]?[^\r\n"'`]*$/i.test(prefix)
+      && /^["'`]?\s+and follow it\./i.test(suffix);
+    const koreanDirective = /^\s*(?:[A-Za-z]:[\\/]|\/)?[^\s"'`]*$/.test(prefix) && /^를 다시 읽고 따라/.test(suffix);
+    if (directive || koreanDirective) {
+      const info = { stem, review: /-review-\d+/.test(stem), anchored };
+      if (ev.conversationId) rememberAgySubSession(String(ev.conversationId), info);
+      return info;
+    }
+  }
+  const caller = callerInfo();
+  if (caller.subStem) {
+    return { stem: caller.subStem, review: /-review-\d+/.test(caller.subStem), anchored: false };
+  }
+  if (ev.conversationId) {
+    return recallAgySubSession(String(ev.conversationId));
+  }
+  return null;
 }
-// Read-only tools a review session may use. The verified review configuration offers read_file as its only read
-// tool (no list/search tool; MCP calls arrive as call_mcp_tool and are denied). view_file is the older name. If a new read
-// tool is denied, check its name in %TEMP%/agent-guard/last-agy-<tool>.json and add it here.
-const REVIEW_READ = /^(read_file|view_file)$/;
-// Returns the auto-allow reason for the session's own files (applied only after the secret checks below), blocks what the
-// session may not do, and returns null otherwise.
+
+const REVIEW_READ = /^(read_file|view_file|grep_search|find_by_name)$/;
 function subSessionScope(ev, name, a) {
   const s = subSession(ev);
   if (!s) return null;
@@ -119,8 +148,11 @@ function subSessionScope(ev, name, a) {
     if (own) return s.anchored ? `agent-kit: ${s.stem}의 자기 보고 파일` : null;
     if (s.review) block(`검토 세션(${s.stem})은 자기 보고 파일(handoff/${s.stem}-report.md, handoff/${s.stem}/) 외에는 쓰지 않는다 (${a.Path})`);
     if (/\/handoff\//.test(p)) block(`하위 세션(${s.stem})은 다른 인계·보고·검증 파일을 고치지 않는다 (${a.Path})`);
+  } else if (/^(invoke_subagent|define_subagent|run_workflow|swarm)$/.test(name)) {
+    block(`하위 세션(${s.stem})은 다른 서브에이전트나 워크플로를 실행하지 않는다 (${name})`);
+  } else if (s.review && !REVIEW_READ.test(name)) {
+    block(`검토 세션(${s.stem})은 읽기·검색 도구와 자기 보고 파일 쓰기만 쓴다 (${name}). 필요하면 보고에 적는다`);
   }
-  else if (s.review && !REVIEW_READ.test(name)) block(`검토 세션(${s.stem})은 읽기 도구와 자기 보고 파일 쓰기만 쓴다 (${name}). 필요하면 보고에 적는다`);
   return null;
 }
 
@@ -131,15 +163,15 @@ function isSecretPath(p) {
   return (SECRET.test(n) || SECRET_DIR.test(n)) && !SECRET_OK.test(n);
 }
 function isTestCred(p) { return typeof p === 'string' && !!p && TEST_CRED.test(norm(p)); }
-function looksSecretGlob(g) { return typeof g === 'string' && /\.env(?![.\w]*(example|sample|template|defaults|dist|schema|md|ts|js|mjs|cjs))(?!\.d\.ts)(?!\w)|credentials(?![^\\/]*\.(?:[cm]?js|jsx|tsx?|py)$)|oauth_creds|mcp_oauth_tokens|mcp_config|\.pem(?![.\w])|\.key(?![.\w])|\.jks(?![.\w])|\.keystore(?![.\w])|id_rsa|id_ed25519|netrc|npmrc|(?<![a-z0-9])test[-_]?accounts?[^\\/]*\.json|cookies?\.txt|\.cookies?(?![.\w])|storage[-_]?state[^\\/]*\.json/i.test(g); }
+const SRC_EXT = '(?:[cm]?js|jsx|tsx?|py|java|kt|kts|scala|go|rs|rb|php|cs|fs|swift|dart|c|cc|cpp|cxx|h|hpp|sql|graphql|gql|proto|vue|svelte|astro)';
+function looksSecretGlob(g) {
+  return typeof g === 'string' && new RegExp(
+    `\\.env(?![.\\w]*(example|sample|template|defaults|dist|schema|md|ts|js|mjs|cjs))(?!\\.d\\.ts)(?!\\.(?:test|ci)$)(?!\\w)|credentials(?![^\\\\/]*\\.${SRC_EXT}$)|oauth_creds|mcp_oauth_tokens|mcp_config|application_default_credentials|\\.pem(?![.\\w])|\\.key(?![.\\w])|\\.jks(?![.\\w])|\\.keystore(?![.\\w])|id_rsa|id_ed25519|netrc|npmrc|pypirc|terraform\\.tfstate|(?<![a-z0-9])test[-_]?accounts?[^\\\\/]*\\.json|cookies?\\.txt|\\.cookies?(?![.\\w])|storage[-_]?state[^\\\\/]*\\.json`,
+    'i'
+  ).test(g);
+}
 
 // ---- protected files ---------------------------------------------------------------------------------------------
-// Files an agent must not change, because changing them switches the guard rails off:
-//  - a repository's .git/hooks/* and .git/config (the pre-push hook and core.hooksPath)
-//  - agent-kit's own files when the session is working on another project (cwd outside agent-kit)
-//  - global/project agent permission, rule and hook configuration files (outside agent-kit maintenance)
-//  - verification approval/acceptance/evidence files under handoff/<ID>/
-// Reading is never restricted.
 const KIT = absPath(dirname(fileURLToPath(import.meta.url)), '..');
 const KIT_REAL = realAbsPath(dirname(fileURLToPath(import.meta.url)), '..');
 const HOME = homedir();
@@ -147,39 +179,77 @@ const REGISTRATION = ['.claude/settings.json', '.codex/hooks.json', '.gemini/con
 const GLOBAL_AGENT_FILES = [
   '.claude/settings.json', '.claude/settings.local.json',
   '.codex/hooks.json', '.codex/config.toml',
-  '.gemini/config/hooks.json', '.gemini/antigravity-cli/settings.json',
+  '.gemini/config/hooks.json', '.gemini/config/skills.json', '.gemini/config/plugins.json',
+  '.gemini/config/mcp_config.json', '.gemini/config/config.json',
+  '.gemini/antigravity-cli/settings.json',
 ].map((f) => absPath(HOME, f));
-const GLOBAL_AGENT_DIRS = ['.codex/rules', '.claude/skills', '.agents/skills', '.gemini/config/skills'].map((d) => absPath(HOME, d));
+const GLOBAL_AGENT_DIRS = [
+  '.codex/rules', '.claude/skills', '.claude/agents', '.claude/plugins',
+  '.agents/skills', '.gemini/config/skills', '.gemini/config/plugins', '.gemini/config/sidecars',
+].map((d) => absPath(HOME, d));
+const PROJECT_CFG_RX = /(^|\/)(\.claude\/(settings[^/]*\.json|hooks(\/|$)|agents(\/|$)|plugins(\/|$)|rules(\/|$)|commands(\/|$))|\.mcp\.json|\.codex(\/|$)|\.gemini(\/|$)|[_.]agents?\/(hooks\.json|plugins\.json|skills\.json|rules(\/|$)|skills(\/|$)|plugins(\/|$)))/;
+
 function inDir(ap, dir) { return ap === dir || ap.startsWith(dir + '/'); }
 function inKit(ap) { return inDir(ap, KIT) || inDir(ap, KIT_REAL); }
-// Reason text if `p` (seen from `cwd`) is protected, else null. keepsGuard: the new content still registers guard.mjs.
-function protectedWrite(cwd, p, keepsGuard) {
+
+function protectedWrite(cwd, p, keepsGuard, isDirDeleteOrMove = false) {
   const np = norm(p);
+  if (!np) return null;
   const ap = absPath(cwd, np);
   const rp = realAbsPath(cwd, np);
   const inKitCwd = inKit(absPath(cwd, '.')) || inKit(realAbsPath(cwd, '.'));
   const caller = callerInfo();
   const isWorkerOrSub = !!(caller.isWorker || caller.subStem || /[\\/]\.worktrees([\\/]|$)/i.test(cwd));
-  if (/(^|\/)\.git\/(hooks(\/|$)|config$)/.test(ap) || /(^|\/)\.git\/(hooks(\/|$)|config$)/.test(rp)) return `Git 훅·설정 파일 변경 (${p}). pre-push 훅은 init.ps1이 설치한다`;
-  if (/(^|\/)handoff\/[^/]+\/(approved\.json|accepted\.json|approvals(\/|$)|verify(\/|$))/.test(ap) || /(^|\/)handoff\/[^/]+\/(approved\.json|accepted\.json|approvals(\/|$)|verify(\/|$))/.test(rp)) return `검증·승인·수락 증거 파일 직접 변경 (${p}). verify.ps1로만 갱신한다`;
+  if (/(^|\/)\.git\/(hooks(\/|$)|config$)/.test(ap) || /(^|\/)\.git\/(hooks(\/|$)|config$)/.test(rp)) {
+    return `Git 훅·설정 파일 변경 (${p}). pre-push 훅은 init.ps1이 설치한다`;
+  }
+  if (isDirDeleteOrMove && (/(^|\/)\.git$/.test(ap) || /(^|\/)\.git$/.test(rp))) {
+    return `Git 저장소 메타데이터(.git) 삭제·이동 (${p})`;
+  }
+  if (/(^|\/)handoff\/[^/]+\/(approved\.json|accepted\.json|approvals(\/|$)|verify(\/|$))/.test(ap) || /(^|\/)handoff\/[^/]+\/(approved\.json|accepted\.json|approvals(\/|$)|verify(\/|$))/.test(rp)) {
+    return `검증·승인·수락 증거 파일 직접 변경 (${p}). verify.ps1로만 갱신한다`;
+  }
+  if (isDirDeleteOrMove && (/(^|\/)handoff(\/[^/]+)?$/.test(ap) || /(^|\/)handoff(\/[^/]+)?$/.test(rp))) {
+    return `검증·승인·수락 증거가 담긴 handoff 폴더 통째 삭제·이동 (${p})`;
+  }
+  const rf = rateFilePath();
+  if (rf) {
+    const rfAbs = absPath(cwd, rf);
+    if (ap === rfAbs || rp === rfAbs || (isDirDeleteOrMove && inDir(rfAbs, ap))) {
+      return `호출 빈도 기록 파일 변경 (${p})`;
+    }
+  }
   if ((inKit(ap) || inKit(rp)) && !inKitCwd) return `다른 프로젝트 세션에서 agent-kit 파일 변경 (${p}). 키트 수정은 agent-kit 폴더 세션에서만 한다`;
   if ((inKit(ap) || inKit(rp)) && /\/local-defaults\.json$/.test(ap) && isWorkerOrSub) return `작업자·하위 세션에서 local-defaults.json 변경 (${p}). 로컬 기본 모델은 사용자가 관리한다`;
-  const isGlobalCfg = GLOBAL_AGENT_FILES.includes(ap) || GLOBAL_AGENT_FILES.includes(rp) || GLOBAL_AGENT_DIRS.some((d) => inDir(ap, d) || inDir(rp, d));
-  const isProjectCfg = /(^|\/)(\.claude\/settings[^/]*\.json|\.codex(\/|$)|\.agents\/hooks\.json)$/.test(ap);
+  const isGlobalCfg = GLOBAL_AGENT_FILES.includes(ap) || GLOBAL_AGENT_FILES.includes(rp)
+    || GLOBAL_AGENT_DIRS.some((d) => inDir(ap, d) || inDir(rp, d))
+    || (isDirDeleteOrMove && [...GLOBAL_AGENT_FILES, ...GLOBAL_AGENT_DIRS].some((d) => inDir(d, ap) || inDir(d, rp)));
+  const isProjectCfg = PROJECT_CFG_RX.test(ap) || PROJECT_CFG_RX.test(rp);
   if ((isGlobalCfg || isProjectCfg) && (!inKitCwd || isWorkerOrSub)) return `에이전트 권한·훅 설정 파일 변경 (${p}). 권한 설정은 사용자가 직접 관리한다`;
-  if ((REGISTRATION.includes(ap) || REGISTRATION.includes(rp)) && !keepsGuard) return `훅 등록 파일에서 guard를 빼거나 미치환 경로(<agent-kit>)로 바꾸는 변경 (${p})`;
+  if ((REGISTRATION.includes(ap) || REGISTRATION.includes(rp)) && !keepsGuard) return `훅 등록 파일에서 guard를 빼거나 비활성화·미치환 경로(<agent-kit>)로 바꾸는 변경 (${p})`;
   return null;
 }
 
 // ---- shell parsing -----------------------------------------------------------------------------------------------
-// Coarse split: ; && || | and newlines. Quotes are not parsed; good enough for a guard rail.
-function coarse(cmd) { return cmd.split(/&&|\|\||[;|\n]/).map((s) => s.trim()).filter(Boolean); }
-// Fine split: block and sub-expression openers also start a segment, so `if (...) { Get-Content .env }`,
-// `try { git push --no-verify }`, `echo $(cat .env)`, `Write-Output (Get-Content .env)` and backtick substitution are
-// checked by their inner command. `${VAR}` / `@{...}` are not split. Trailing `}` and `)` are dropped.
-function segments(cmd) { return cmd.split(/&&|\|\||[;|\n`]|(?<![$@])\{|\(/).map((s) => s.replace(/[\s})]+$/, '').trim()).filter(Boolean); }
-// Check agent invocations at unquoted command boundaries. A prompt can contain shell punctuation and agent names.
-function agentSegments(cmd) {
+// Replace characters inside single/double quotes with safe placeholders when splitting non-script commands so commit
+// messages like `git commit -m "fix: (type .env.local) a -> .git/hooks/pre-push"` never trigger false positives.
+function maskQuotedText(cmd) {
+  let out = '', quote = '', i = 0;
+  while (i < cmd.length) {
+    const c = cmd[i];
+    if (quote) {
+      if (c === quote) { quote = ''; out += c; i++; continue; }
+      if (c === '\\' && quote === '"' && i + 1 < cmd.length) { out += '  '; i += 2; continue; }
+      out += /[A-Za-z0-9_./:\\-]/.test(c) ? c : ' ';
+      i++; continue;
+    }
+    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
+    out += c; i++;
+  }
+  return out;
+}
+
+function splitUnquoted(cmd, fine = false) {
   const result = [];
   let quote = '', here = '', start = 0;
   for (let i = 0; i < cmd.length; i++) {
@@ -193,46 +263,97 @@ function agentSegments(cmd) {
       else if (c === '\\' && cmd[i + 1] === quote && quote === '"') i++;
       continue;
     }
-    if (c === '@' && /["']/.test(cmd[i + 1]) && /[\r\n]/.test(cmd[i + 2])) here = cmd[++i];
-    else if (c === '"' || c === "'") quote = c;
-    else if (/[;|\r\n{}()]/.test(c) || (c === '&' && cmd[i + 1] === '&')) {
-      result.push(cmd.slice(start, i));
-      if (c === '&') i++;
+    if (c === '@' && /["']/.test(cmd[i + 1]) && /[\r\n]/.test(cmd[i + 2])) { here = cmd[++i]; continue; }
+    if (c === '"' || c === "'") { quote = c; continue; }
+    const isAndOr = (c === '&' && cmd[i + 1] === '&') || (c === '|' && cmd[i + 1] === '|');
+    const isSep = isAndOr || /[;|\r\n]/.test(c);
+    const isFineSep = fine && (c === '`' || c === '(' || (c === '{' && !/[$@]/.test(cmd[i - 1] || '')));
+    if (isSep || isFineSep) {
+      const slice = cmd.slice(start, i).replace(/[\s})]+$/, '').trim();
+      if (slice) result.push(slice);
+      if (isAndOr) i++;
       start = i + 1;
     }
   }
-  result.push(cmd.slice(start));
+  const tail = cmd.slice(start).replace(/[\s})]+$/, '').trim();
+  if (tail) result.push(tail);
   return result;
 }
-// Words of a segment with leading wrappers removed, so that w[0] is the real command: control keywords
-// (`then cat f`, `if git push …`, `} else …`), the PowerShell call operator `&`, assignments (`$x = cmd`, `FOO=1 cmd`),
-// `cmd /c <command>` and `hc exec <command>`.
-function words(seg, unwrapCmdScript = false) {
+
+function coarse(cmd) { return splitUnquoted(cmd, false); }
+function segments(cmd) { return splitUnquoted(cmd, true); }
+function agentSegments(cmd) { return splitUnquoted(cmd, true); }
+
+function stripOuterQuotes(s) {
+  const t = String(s || '').trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    const inner = t.slice(1, -1);
+    return t.startsWith('"') ? inner.replace(/\\"/g, '"') : inner.replace(/''/g, "'");
+  }
+  return t;
+}
+
+// Extract nested shell scripts passed via `powershell -Command "..."`, `bash -c "..."`, `cmd /c "..."` so role/file
+// checks cannot be bypassed by wrapping a command in a nested shell string.
+function expandNestedShellScripts(segs, depth = 0) {
+  if (depth >= 2) return segs;
+  const out = [...segs];
+  for (const seg of segs) {
+    const w = (seg.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []).filter(Boolean);
+    if (w.length < 2) continue;
+    const v = verbOf(w[0]).toLowerCase();
+    if (/^(powershell|pwsh)$/.test(v)) {
+      const k = w.findIndex((x, idx) => idx > 0 && /^-(?:c|command)$/i.test(norm(x)));
+      if (k >= 0 && w[k + 1]) {
+        const inner = stripOuterQuotes(w.slice(k + 1).join(' '));
+        if (inner && inner !== seg) out.push(...expandNestedShellScripts(segments(inner), depth + 1));
+      }
+    } else if (/^(bash|sh|zsh|dash|ksh)$/.test(v)) {
+      const k = w.findIndex((x, idx) => idx > 0 && /^-[a-z]*c$/i.test(norm(x)));
+      if (k >= 0 && w[k + 1]) {
+        const inner = stripOuterQuotes(w[k + 1]);
+        if (inner && inner !== seg) out.push(...expandNestedShellScripts(segments(inner), depth + 1));
+      }
+    } else if (v === 'cmd' && /^\/[ck]$/i.test(norm(w[1] || '')) && w[2]) {
+      const inner = stripOuterQuotes(w.slice(2).join(' '));
+      if (inner && inner !== seg) out.push(...expandNestedShellScripts(segments(inner), depth + 1));
+    }
+  }
+  return out;
+}
+
+function rawWords(seg) {
   const w = (seg.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []).filter(Boolean);
   for (let n = 0; n < 16; n++) {
     const a = w[0] || '';
     if (w.length > 1 && /^(&|\}|then|do|else|try|finally|if|while|until|elif|!|command|builtin|time|exec|env|sudo|nohup)$/i.test(a)) w.shift();
-    else if (/^\$[\w:]+$/.test(a) && w[1] === '=') w.splice(0, 2);          // $x = cmd
-    else if (/^\$[\w:]+=$/.test(a)) w.shift();                              // $x= cmd
-    else if (/^\$[\w:]+=./.test(a)) w[0] = a.replace(/^\$[\w:]+=/, '');     // $x=cmd
-    else if (w.length > 1 && /^[A-Za-z_]\w*=\S*$/.test(a)) w.shift();       // FOO=1 cmd
-    else if (/^cmd$/i.test(verbOf(a)) && /^\/[ck]$/i.test(w[1] || '')) {
-      w.splice(0, 2);
-      const script = w[0]?.replace(/^(["'])(.*)\1$/, '$2');
-      if (unwrapCmdScript && script !== w[0]) return words(script);
-    }
-    else if (/^hc$/i.test(verbOf(a)) && /^exec$/i.test(w[hcSubcommandIndex(w)] || '')) {
-      w.splice(0, hcSubcommandIndex(w) + 1);
-      w.splice(0, hcArgumentIndex(w, 0, /^--(on|cwd|env|timeout)$/i));
-    }
+    else if (/^\$[\w:]+$/.test(a) && w[1] === '=') w.splice(0, 2);
+    else if (/^\$[\w:]+=$/.test(a)) w.shift();
+    else if (/^\$[\w:]+=./.test(a)) w[0] = a.replace(/^\$[\w:]+=/, '');
+    else if (w.length > 1 && /^[A-Za-z_]\w*=\S*$/.test(a)) w.shift();
     else break;
   }
   return w;
 }
-// Program name of a word: `"C:\x\agy.exe"` -> agy, `(Get-Content` -> Get-Content.
+
+function words(seg, unwrapCmdScript = false) {
+  const w = rawWords(seg);
+  for (let n = 0; n < 8; n++) {
+    const a = w[0] || '';
+    if (/^cmd$/i.test(verbOf(a)) && /^\/[ck]$/i.test(w[1] || '')) {
+      w.splice(0, 2);
+      const script = w[0]?.replace(/^(["'])(.*)\1$/, '$2');
+      if (unwrapCmdScript && script !== w[0]) return words(script);
+    } else if (/^hc$/i.test(verbOf(a)) && /^exec$/i.test(w[hcSubcommandIndex(w)] || '')) {
+      w.splice(0, hcSubcommandIndex(w) + 1);
+      w.splice(0, hcArgumentIndex(w, 0, /^--(on|cwd|env|timeout)$/i));
+    } else break;
+  }
+  return w;
+}
+
 function verbOf(word) { return String(word || '').replace(/^[({]+/, '').replace(/^["'`]+|["'`]+$/g, '').replace(/^.*[\\/]/, '').replace(/\.(exe|cmd|ps1)$/i, ''); }
-// Parses `hc [global opts] run [hc-run opts] [--] <targetExe> [targetArgs...]` so provider/flag checks inspect the
-// actual target binary and its option tokens, never words that merely appear inside the trailing prompt text.
+
 function hcRunInfo(w) {
   const rIdx = hcSubcommandIndex(w);
   if (norm(w[rIdx] || '').toLowerCase() !== 'run') return null;
@@ -261,7 +382,19 @@ function hcRunInfo(w) {
   const optTokens = rest.filter((t) => norm(t).startsWith('-'));
   return { cwd, name, targetExe, targetVerb, rest, optTokens };
 }
-// Commands that start an agent or another process; a bypass flag only counts when one of these runs it.
+
+function extractAgyPrompt(agyArgs) {
+  for (let idx = 0; idx < agyArgs.length; idx++) {
+    const o = norm(agyArgs[idx]);
+    if (/^(?:-i|-p|--prompt(?:-interactive)?|--print)$/i.test(o) && agyArgs[idx + 1] !== undefined) {
+      return agyArgs[idx + 1];
+    }
+    const m = /^(?:--prompt(?:-interactive)?|--print)=(.*)$/i.exec(o);
+    if (m) return m[1];
+  }
+  return agyArgs.at(-1) || '';
+}
+
 const LAUNCHERS = /^(claude|codex|agy|gemini|npx|npm|bunx|pnpm|yarn|node|bash|sh|env|sudo|start|start-process|cmd|powershell|pwsh)$/i;
 const AGY_PROGRAM = /^(agy|antigravity)$/i;
 const WRAPPER = /^(bash|sh|env|sudo|start|start-process|cmd|powershell|pwsh)$/i;
@@ -269,7 +402,6 @@ const WRAPPER = /^(bash|sh|env|sudo|start|start-process|cmd|powershell|pwsh)$/i;
 const HC_FALLBACK = process.platform === 'win32'
   ? join(process.env.LOCALAPPDATA || join(HOME, 'AppData', 'Local'), 'Programs', 'herdr-core', 'hc.exe') : '';
 
-// Inspect a Herdr terminal without supplying the hook caller's terminal ID.
 function hcGetTerminal(target) {
   if (!target) return null;
   const env = { ...process.env };
@@ -285,7 +417,7 @@ function hcGetTerminal(target) {
     }
     const t = JSON.parse(result);
     return t && typeof t === 'object' ? t : null;
-  } catch { /* Unavailable or invalid terminal facts cannot authorize input. */ }
+  } catch {}
   return null;
 }
 
@@ -330,9 +462,7 @@ function hcArgumentIndex(w, start, valueOption) {
 
 function hcSubcommandIndex(w) { return hcArgumentIndex(w, 1, /^$/); }
 
-// Lightweight anti-burst & anti-infinite-loop guardrail for hc run / hc send / hc keys.
-// Never blocks just because another AGY session is working; enforces a minimum gap between AGY launches and
-// sliding-window caps to catch retry loops and accidental fan-out bursts.
+// ---- rate limits (atomic write + merged primary/fallback read) ---------------------------------------------------
 function rateFilePath() {
   const env = process.env.AGENTKIT_RATE_FILE;
   if (env === 'off') return null;
@@ -351,26 +481,23 @@ function readRateEvents(path, now) {
   } catch {}
   return [];
 }
-function writeRateEvents(path, events) {
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify({ events }) + '\n');
-    return true;
-  } catch {
-    return false;
-  }
-}
 function enforceRateLimits(actions) {
   if (!actions.length) return;
   const primary = rateFilePath();
   if (!primary) return;
   const fallback = join(tmpdir(), 'agent-kit-hc-rate.json');
   const now = Number(process.env.AGENTKIT_NOW_MS) || Date.now();
-  let activePath = primary;
   let events = readRateEvents(primary, now);
-  if (!existsSync(primary) && !process.env.AGENTKIT_RATE_FILE && existsSync(fallback)) {
+  if (!process.env.AGENTKIT_RATE_FILE && existsSync(fallback)) {
     const fbEvents = readRateEvents(fallback, now);
-    if (fbEvents.length) { activePath = fallback; events = fbEvents; }
+    if (fbEvents.length) {
+      const seen = new Set(events.map((e) => `${e.ts}:${e.kind}:${e.name || e.target || ''}`));
+      for (const e of fbEvents) {
+        const key = `${e.ts}:${e.kind}:${e.name || e.target || ''}`;
+        if (!seen.has(key)) { seen.add(key); events.push(e); }
+      }
+      events.sort((a, b) => a.ts - b.ts);
+    }
   }
   const within = (ms, pred) => events.filter((e) => e.ts >= now - ms && pred(e));
   for (const a of actions) {
@@ -412,14 +539,12 @@ function enforceRateLimits(actions) {
     }
     events.push({ ...a, ts: now });
   }
-  if (!writeRateEvents(activePath, events) && !process.env.AGENTKIT_RATE_FILE && activePath !== fallback) {
-    writeRateEvents(fallback, events);
+  if (!atomicWriteJson(primary, { events }) && !process.env.AGENTKIT_RATE_FILE) {
+    atomicWriteJson(fallback, { events });
   }
 }
-// Options of search commands that take a value (so the value is not mistaken for the search pattern).
+
 const SEARCH_VALUE_OPT = /^(-path|-literalpath|-include|-exclude|-encoding|-context|-f|--file|--include|--exclude|--exclude-dir|-g|--glob|-t|--type|-A|-B|-C|-m|--max-count)$/i;
-// For search commands drop the search pattern (text, not a file) before looking for file names in the arguments:
-// the value of -e/--regexp/-Pattern, otherwise the first positional argument (findstr /c:"text" carries its own pattern).
 function searchArgs(verb, w) {
   if (!/^(rg|grep|egrep|fgrep|findstr|select-string|sls)$/i.test(verb)) return w.slice(1).join(' ');
   const rest = w.slice(1);
@@ -436,9 +561,6 @@ function searchArgs(verb, w) {
   return rest.join(' ');
 }
 
-// Shell command text of a tool call, or null if the call is not a shell call. Besides Claude's Bash/PowerShell and
-// Codex's documented Bash, it accepts other shell tool names, a `cmd` field and an argv array (["powershell","-Command","..."]),
-// so an unexpected input shape is still checked instead of silently allowed.
 const FILE_TOOLS = ['Read', 'Edit', 'Write', 'NotebookEdit', 'Grep', 'Glob', 'apply_patch'];
 function shellCommand(tool, inp) {
   const shellName = /^(Bash|PowerShell|shell|local_shell|exec_command|unified_exec)$/i.test(tool);
@@ -446,8 +568,6 @@ function shellCommand(tool, inp) {
   if (!shellName && (FILE_TOOLS.includes(tool) || c === undefined)) return null;
   if (Array.isArray(c)) {
     const a = c.map(String);
-    // Only a shell's own "run this string" flag marks where the real command starts; any other argv (git -C, codex -c ...)
-    // is kept whole so its verb and options are still checked.
     const exe = (a[0] || '').replace(/^.*[\\/]/, '').replace(/\.(exe|cmd)$/i, '').toLowerCase();
     let k = -1;
     if (/^(bash|sh|zsh|dash|ksh)$/.test(exe)) k = a.findIndex((x, i) => i > 0 && /^-l?c$/.test(x));
@@ -457,11 +577,15 @@ function shellCommand(tool, inp) {
   }
   return typeof c === 'string' ? c : '';
 }
-// Shape of the last input per tool (names and value types only, never values) for checking what a tool really sends.
+
+// Opt-in diagnostic only (`AGENTKIT_DEBUG_SHAPES=1`) so ordinary tool calls incur zero temp-dir I/O or metadata exposure.
 function recordShape(ev) {
-  if (process.env.AGENT_GUARD_TEST) return;   // regression tests must not overwrite the shapes real sessions left
+  if (process.env.AGENT_GUARD_TEST || process.env.AGENTKIT_DEBUG_SHAPES !== '1') return;
   try {
-    const dir = join(tmpdir(), 'agent-guard');
+    const base = process.platform === 'win32'
+      ? (process.env.LOCALAPPDATA || join(HOME, 'AppData', 'Local'))
+      : join(HOME, '.cache');
+    const dir = join(base, 'agent-kit', 'shapes');
     mkdirSync(dir, { recursive: true });
     const inp = ev.tool_input || (ev.toolCall && ev.toolCall.args) || {};
     const name = ev.tool_name || (ev.toolCall ? 'agy-' + ev.toolCall.name : 'none');
@@ -471,48 +595,84 @@ function recordShape(ev) {
   } catch {}
 }
 
+function checkInlineCodeTokens(cwd, codeText, checkProtected = true) {
+  const cleaned = String(codeText || '').replace(/--(env-file|cacert|cafile|capath|cert|key|public-key|private-key|ssl-key|ssl-cert|tls-key|tls-cert)(=|\s+)\S+/gi, ' ');
+  const mutates = /\b(writeFileSync|writeFile|appendFileSync|copyFileSync|unlinkSync|rmSync|rmdirSync|renameSync|WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|Delete|Move|Copy|open\s*\([^)]*['"][wa+])/i.test(cleaned);
+  for (const tok of cleaned.split(/[\s|;&<>()=,:{}'"]+/).filter(Boolean)) {
+    if (isSecretPath(tok) && !(/\.(key|pem|p12|pfx|jks|keystore)$/i.test(norm(tok)) && !/[\\/]/.test(tok))) {
+      block(`비밀 파일을 읽는 명령 (${norm(tok)})`);
+    }
+    if (isTestCred(tok) && /\b(readFileSync|readFile|ReadAllText|ReadAllLines|open\s*\()/i.test(cleaned)) {
+      block(`테스트 자격증명 파일 열람 (${norm(tok)}). 테스트 도구 인자로만 쓴다`);
+    }
+    if (checkProtected && mutates) {
+      const why = protectedWrite(cwd, tok, false, /\b(rmSync|rmdirSync|unlinkSync|Delete)\b/i.test(cleaned));
+      if (why) block(why);
+    }
+  }
+}
+
 let raw = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => (raw += c));
-// Any unexpected error passes (exit 0, empty stdout): for Antigravity a crashed hook would block every tool call.
 process.stdin.on('end', () => { try { main(); } catch { process.exit(0); } });
+
 function main() {
   let ev;
   try { ev = JSON.parse(raw); } catch { process.exit(0); }
   if (!ev || typeof ev !== 'object') process.exit(0);
   recordShape(ev);
   PRE = !ev.toolCall && ev.hook_event_name === 'PreToolUse';
-  let agyAuto = null;   // auto-allow reason for an Antigravity sub-session's own file, granted after the secret checks
+  let agyAuto = null;
   const agySub = ev.toolCall ? subSession(ev) : null;
-  // Antigravity: apply the sub-session scope, then map its tools onto the Claude shapes checked below.
   if (ev.toolCall) {
     AGY = true;
     const n = String(ev.toolCall.name || ''), a = ev.toolCall.args || {};
+    const evCwd = ev.cwd || (ev.workspacePaths || [])[0] || process.cwd();
     agyAuto = subSessionScope(ev, n, a);
-    const map = { read_file: ['Read', { file_path: a.Path }], view_file: ['Read', { file_path: a.Path }],
-                  write_file: ['Write', { file_path: a.Path, content: a.Content }],
-                  edit_file: ['Edit', { file_path: a.Path, old_string: a.Target, new_string: a.Replacement }],
-                  run_command: ['Bash', { command: a.CommandLine }] };
+    if (n === 'browser_navigate') {
+      const u = String(a.Url || a.url || '');
+      if (/^file:/i.test(u)) {
+        const fp = decodeURIComponent(u.replace(/^file:\/\/\/?/i, ''));
+        if (isSecretPath(fp) || isTestCred(fp)) block(`브라우저로 비밀·자격증명 파일 접근 (${fp})`);
+      }
+    } else if (n === 'run_workflow') {
+      if (a.Script) checkInlineCodeTokens(evCwd, String(a.Script), true);
+      if (a.ScriptPath && isSecretPath(String(a.ScriptPath))) block(`비밀 파일 접근 (${a.ScriptPath})`);
+    }
+    const map = {
+      read_file: ['Read', { file_path: a.Path }],
+      view_file: ['Read', { file_path: a.Path }],
+      write_file: ['Write', { file_path: a.Path, content: a.Content }],
+      edit_file: ['Edit', { file_path: a.Path, old_string: a.Target, new_string: a.Replacement }],
+      run_command: ['Bash', { command: a.CommandLine }],
+      grep_search: ['Grep', { path: a.SearchPath || '', glob: Array.isArray(a.Includes) ? (a.Includes[0] || '') : '' }],
+      find_by_name: ['Glob', { path: a.SearchDirectory || '', pattern: a.Pattern || '' }],
+    };
     const m = map[n];
-    ev = { tool_name: m ? m[0] : 'agy:' + n, tool_input: m ? m[1] : {}, cwd: ev.cwd || (ev.workspacePaths || [])[0] };
+    ev = { tool_name: m ? m[0] : 'agy:' + n, tool_input: m ? m[1] : {}, cwd: evCwd };
   }
   const tool = ev.tool_name || '';
   const inp = ev.tool_input || {};
   const cwd = ev.cwd || process.cwd();
-  const hasGuard = (s) => /guard\.mjs/.test(String(s || '')) && !/<agent-kit>/i.test(String(s || ''));
+  const hasGuard = (s) => {
+    const str = String(s || '');
+    return /guard\.mjs/.test(str) && !/<agent-kit>/i.test(str) && !/"disableAllHooks"\s*:\s*true/.test(str) && !/"enabled"\s*:\s*false/.test(str);
+  };
 
-  // Codex file edits: the patch names its files in "*** Add File: / *** Update File: / *** Delete File: / *** Move to:" lines.
-  // Codex documents Edit/Write as aliases of apply_patch, so a patch body without file_path is checked the same way.
   const patchText = String(inp.command || inp.patch || inp.input || '');
   const isPatch = tool === 'apply_patch' || (['Edit', 'Write'].includes(tool) && !inp.file_path && /^\*\*\* (Add File|Update File|Delete File|Move to):/m.test(patchText));
   if (isPatch) {
-    const removesGuard = /^-.*guard\.mjs/m.test(patchText) && !/^\+.*guard\.mjs/m.test(patchText);
+    const removesGuard = (/^-.*guard\.mjs/m.test(patchText) && !/^\+.*guard\.mjs/m.test(patchText))
+      || /^\+.*"(?:disableAllHooks|enabled)"\s*:\s*(?:true|false)/m.test(patchText);
     for (const m of patchText.matchAll(/^\*\*\* (Add File|Update File|Delete File|Move to): *(.+?)\s*$/gm)) {
       const [, kind, p] = m;
       if (isSecretPath(p)) block(`비밀 파일 편집 (${p})`);
-      if (isTestCred(p) && (kind === 'Update File' || kind === 'Move to')) block(`테스트 자격증명 파일 편집 (${p}). 새로 만들거나 테스트 도구 인자로만 쓴다`);
-      const keeps = kind === 'Update File' ? !removesGuard : kind === 'Add File' ? /^\+.*guard\.mjs/m.test(patchText) : false;
-      const why = protectedWrite(cwd, p, keeps);
+      if (isTestCred(p) && (kind === 'Update File' || kind === 'Move to' || (kind === 'Add File' && existsSync(resolve(cwd, norm(p)))))) {
+        block(`테스트 자격증명 파일 편집·덮어쓰기 (${p}). 새로 만들거나 테스트 도구 인자로만 쓴다`);
+      }
+      const keeps = kind === 'Update File' ? !removesGuard : kind === 'Add File' ? hasGuard(patchText) : false;
+      const why = protectedWrite(cwd, p, keeps, kind === 'Delete File');
       if (why) block(why);
     }
     process.exit(0);
@@ -521,8 +681,12 @@ function main() {
     const p = inp.file_path || inp.notebook_path;
     if (isSecretPath(p)) block(`비밀 파일 접근 (${p})`);
     if (tool !== 'Write' && isTestCred(p)) block(`테스트 자격증명 파일 열람 (${p}). 테스트 도구 인자로만 쓴다`);
+    if (tool === 'Write' && isTestCred(p) && existsSync(resolve(cwd, norm(p)))) {
+      block(`기존 테스트 자격증명 파일 덮어쓰기 (${p}). 기존 자격증명 파일은 보존한다`);
+    }
     if (tool !== 'Read' && typeof p === 'string' && p) {
-      const keeps = tool === 'Write' ? hasGuard(inp.content) : !(hasGuard(inp.old_string) && !hasGuard(inp.new_string));
+      const keeps = tool === 'Write' ? hasGuard(inp.content)
+        : !(hasGuard(inp.old_string) && !hasGuard(inp.new_string)) && !/"(?:disableAllHooks|enabled)"\s*:\s*(?:true|false)/.test(String(inp.new_string || ''));
       const why = protectedWrite(cwd, p, keeps);
       if (why) block(why);
     }
@@ -539,7 +703,6 @@ function main() {
   const cmd = shellCommand(tool, inp);
   if (cmd !== null) {
     const branchCache = new Map(), policyCache = new Map();
-    // Branch of the repo the command acts on: ev.cwd, or the folder given by `git -C <dir>`.
     const currentBranch = (dir) => {
       const where = resolve(cwd, dir || '.');
       if (branchCache.has(where)) return branchCache.get(where);
@@ -548,9 +711,6 @@ function main() {
       branchCache.set(where, b);
       return b;
     };
-    // Submission and orchestration policy of that repo: the local Git config init.ps1 writes and hooks/pre-push reads.
-    // pr: agentkit.protectedBranches (main,master if empty); direct: that list only; local: every push;
-    // not set or unknown (older setups, or not a repository): main,master. Repository config only (--local), never global.
     const policyOf = (dir) => {
       const where = resolve(cwd, dir || '.');
       if (policyCache.has(where)) return policyCache.get(where);
@@ -565,43 +725,57 @@ function main() {
       policyCache.set(where, p);
       return p;
     };
-    // ---- whole-command checks (coarse segments): flags and options that may sit anywhere after the launcher ----
-    for (const seg of coarse(cmd)) {
+
+    const coarseSegs = expandNestedShellScripts(coarse(cmd));
+    for (const seg of coarseSegs) {
+      const rw = rawWords(seg);
+      const rawVerb = verbOf(rw[0]).toLowerCase();
+      // Guard `hc exec` BEFORE `words()` unwraps it, so sub-sessions / workers / manual mode cannot escape onto other terminals.
+      if (rawVerb === 'hc') {
+        const rHcIdx = hcSubcommandIndex(rw);
+        const rHcSub = norm(rw[rHcIdx] || '').toLowerCase();
+        if (rHcSub === 'exec') {
+          const caller = callerInfo();
+          const subStem = agySub?.stem || caller.subStem;
+          if (subStem) block(`하위 세션(${subStem})은 hc exec을 실행하지 않는다`);
+          const onIdx = rw.findIndex((t, idx) => idx > rHcIdx && /^--on(?:=|$)/i.test(norm(t)));
+          if (onIdx >= 0) {
+            if (policyOf(null).crossMode === 'manual') block('수동 인계(agentkit.crossAgentMode=manual) 모드에서는 hc exec --on을 쓰지 않는다');
+            const onTarget = /^--on=/i.test(norm(rw[onIdx])) ? norm(rw[onIdx]).slice(5) : norm(rw[onIdx + 1] || '');
+            if (caller.isWorker) {
+              const { parent } = hcTargetInfo(onTarget);
+              if (!parent || parent !== caller.id) block(`작업자 세션(${caller.name})은 자기가 띄운 직계 자식 외 터미널에서 hc exec --on을 실행하지 않는다`);
+            }
+          }
+        }
+      }
+
       const w = words(seg, true);
       const verb = verbOf(w[0]);
       const hcInfo = /^hc$/i.test(verb) ? hcRunInfo(w) : null;
       const hcRun = !!hcInfo;
-      // 0) permission-bypass flags: only when the segment launches an agent or a process (not when the flag name is
-      //    mere text in a commit message, hc send, a heredoc line or a search pattern).
-      if (BYPASS.test(seg) && (LAUNCHERS.test(verb) || hcRun)) block('권한 우회 플래그');
-      // hc: options that cut or move the parent link.
+      if (BYPASS.test(seg) && (LAUNCHERS.test(verb) || hcRun)) block('권한·훅 우회 플래그');
       if (hcRun && /(^|\s)--(parent|outlive-parent)\b/.test(seg)) block('hc run의 부모 추적을 바꾸는 옵션');
-      // A worker (in .worktrees/<id> or a task-* Herdr terminal) must never spawn another worker (task-<id>).
       if (hcRun && /^task-[a-z0-9_.-]+$/i.test(hcInfo.name || '') && (/[\\/]\.worktrees([\\/]|$)/i.test(cwd) || callerInfo().isWorker)) {
         block('작업자 세션은 다른 작업자(task-*)를 실행하지 않는다');
       }
-      // Codex via hc run requires --no-daemon on the codex command itself so it stays in the hc child tree.
       if (hcRun && hcInfo.targetVerb === 'codex' && !hcInfo.optTokens.some((t) => /^--no-daemon$/i.test(norm(t)))) {
         block('hc run으로 codex를 띄울 때는 --no-daemon이 필요하다(없으면 부모 추적이 끊긴다)');
       }
-      // Review iteration hard cap: stem numbers are cumulative across gap review (1..2) and pre-completion review (3..4); > 4 is blocked.
       if (hcRun && hcInfo.name) {
         const revCap = /^((?:sub|agy)-[a-z0-9_.-]*-review-(\d+))$/i.exec(hcInfo.name);
         if (revCap && Number.parseInt(revCap[2], 10) > 4) block(`하위 검토 세션(${revCap[1]})의 누적 실행 번호가 상한(4: 빈틈 검토 2회 + 완료 전 검토 2회)을 넘었다. 상위 세션이나 사용자에게 보고한다`);
       }
-      // Interpreter inline scripts (`python -c "open('.env')"`, `node -e "readFileSync('.env')"`) contain `(` so
-      // fine `segments()` splits the filename out of the interpreter segment; check them on the coarse segment too.
-      if (/^(node|python|python3|py|deno|bun)$/i.test(verb)) {
-        const inlineArgs = w.slice(1).join(' ').replace(/--(env-file|cacert|cafile|capath|cert|key|public-key|private-key|ssl-key|ssl-cert|tls-key|tls-cert)(=|\s+)\S+/gi, ' ');
-        for (const tok of inlineArgs.split(/[\s|;&<>()=,:{}'"]+/).filter(Boolean)) {
-          if (isSecretPath(tok) && !(/\.(key|pem|p12|pfx|jks|keystore)$/i.test(norm(tok)) && !/[\\/]/.test(tok))) {
-            block(`비밀 파일을 읽는 명령 (${norm(tok)})`);
-          }
-        }
+      if (/^(node|python|python3|py|deno|bun|powershell|pwsh)$/i.test(verb)) {
+        const isPsFile = /^(powershell|pwsh)$/i.test(verb) && w.some((x) => /^-file$/i.test(norm(x)));
+        if (!isPsFile) checkInlineCodeTokens(cwd, w.slice(1).join(' '), true);
       }
-      // git config overrides given through the environment skip the pre-push hook just like -c core.hooksPath.
-      if (/(^|[\s;$:{(])GIT_CONFIG_(COUNT|PARAMETERS|KEY_\d+|VALUE_\d+|GLOBAL|SYSTEM)\s*=/.test(seg)) block('GIT_CONFIG_* 환경 변수(pre-push 훅 우회)');
+      if (/\[(?:system\.)?io\.file\]::/i.test(seg)) {
+        checkInlineCodeTokens(cwd, seg, true);
+      }
+      if (/(^|[\s;$:{(])GIT_CONFIG_(COUNT|PARAMETERS|KEY_\d+|VALUE_\d+|GLOBAL|SYSTEM)\s*=/.test(seg)) block('GIT_CONFIG_* 환경 변수(pre-push 훅·정책 우회)');
     }
+
     const rateActions = [];
     for (const seg of agentSegments(cmd)) {
       const w = words(seg, true);
@@ -619,7 +793,7 @@ function main() {
         if (modeValue === 'auto' && !agyWorker) block('agy --mode auto는 작업자(task-<id>) 실행에만 쓴다');
         const sub = hcRun && hcInfo.name ? /^((?:sub|agy)-[a-z0-9_.-]*-(?:review|research)-\d+)$/i.exec(hcInfo.name) : null;
         if (sub) {
-          const promptText = agyArgs.at(-1) || '';
+          const promptText = extractAgyPrompt(agyArgs);
           if (!new RegExp(`handoff[\\\\/]${reEsc(sub[1])}\\.md`, 'i').test(promptText)) {
             block(`하위 세션(${sub[1]})의 시작 문장에 handoff/${sub[1]}.md가 없다`);
           }
@@ -636,7 +810,7 @@ function main() {
         rateActions.push({ kind: 'run', agy: AGY_PROGRAM.test(hcInfo.targetVerb), name: (hcInfo.name || '').toLowerCase() });
       }
       if (/^(send|keys|interrupt)$/.test(hcSub) && !hcHelp) {
-        const targetIndex = hcArgumentIndex(w, hcIndex + 1, /^--(if|timeout)$/i);
+        const targetIndex = hcArgumentIndex(w, hcIndex + 1, /^--(if|timeout|wait|force)$/i);
         const target = norm(w[targetIndex] || '');
         const caller = callerInfo();
         if (caller.isWorker) {
@@ -653,15 +827,18 @@ function main() {
         }
       }
     }
-    for (const seg of segments(cmd)) {
+
+    const fineSegs = expandNestedShellScripts(segments(cmd));
+    for (const seg of fineSegs) {
       const w = words(seg, true);
       const verb = verbOf(w[0]).toLowerCase();
-      // Sub-sessions (research/review across all tools) must not spawn/control other hc terminals or run verify/init.
+      const unquotedSeg = maskQuotedText(seg);
+
       if (verb === 'hc') {
         const hcIndex = hcSubcommandIndex(w);
         const hcSub = norm(w[hcIndex] || '').toLowerCase();
-        const subStem = agySub?.stem || (/^(run|send|keys|interrupt|kill|rm)$/.test(hcSub) ? callerInfo().subStem : null);
-        if (subStem && /^(run|send|keys|interrupt|kill|rm)$/.test(hcSub)) block(`하위 세션(${subStem})은 다른 에이전트 세션을 실행하거나 제어하지 않는다 (hc ${hcSub})`);
+        const subStem = agySub?.stem || (/^(run|send|keys|interrupt|kill|rm|exec)$/.test(hcSub) ? callerInfo().subStem : null);
+        if (subStem && /^(run|send|keys|interrupt|kill|rm|exec)$/.test(hcSub)) block(`하위 세션(${subStem})은 다른 에이전트 세션을 실행하거나 제어하지 않는다 (hc ${hcSub})`);
         if (/^(kill|rm)$/.test(hcSub)) {
           const caller = callerInfo();
           if (caller.isWorker) {
@@ -677,11 +854,10 @@ function main() {
           if (curPol.crossMode === 'manual' || targetPol.crossMode === 'manual') block('이 저장소는 수동 인계(agentkit.crossAgentMode=manual) 모드다: hc run/send/keys 대신 작업·검토 파일을 쓰고 사용자에게 실행을 요청한다');
         }
       }
-      // Role boundaries for agent-kit verification/policy scripts (applies even when Codex global rules allow them).
-      // Only match when powershell/pwsh/verify/init actually invokes verify.ps1 or init.ps1 (not search patterns split on `|`).
+
       const scriptTokens = w.map((tok) => norm(tok));
-      const runsVerify = (/^(powershell|pwsh)$/i.test(verb) && scriptTokens.some((tok) => /(?:^|[\\/])verify\.ps1$/i.test(tok))) || /^verify$/i.test(verb) && /(?:^|[\s"'\\/])verify\.ps1(?:["'\s]|$)/i.test(seg);
-      const runsInit = (/^(powershell|pwsh)$/i.test(verb) && scriptTokens.some((tok) => /(?:^|[\\/])init\.ps1$/i.test(tok))) || /^init$/i.test(verb) && /(?:^|[\s"'\\/])init\.ps1(?:["'\s]|$)/i.test(seg);
+      const runsVerify = (/^(powershell|pwsh)$/i.test(verb) && scriptTokens.some((tok) => /(?:^|[\\/])verify\.ps1$/i.test(tok))) || (/^verify$/i.test(verb) && /(?:^|[\s"'\\/])verify\.ps1(?:["'\s]|$)/i.test(seg));
+      const runsInit = (/^(powershell|pwsh)$/i.test(verb) && scriptTokens.some((tok) => /(?:^|[\\/])init\.ps1$/i.test(tok))) || (/^init$/i.test(verb) && /(?:^|[\s"'\\/])init\.ps1(?:["'\s]|$)/i.test(seg));
       if (runsVerify || runsInit) {
         const caller = callerInfo();
         const subStem = agySub?.stem || caller.subStem;
@@ -690,11 +866,21 @@ function main() {
         if (isWorker && runsVerify && scriptTokens.some((tok) => /^-(Prepare|Prep|Pre|Pr|Accept|Accep|Acce|Acc|Ac|A)$/i.test(tok))) {
           block('작업자 세션은 verify.ps1 -Prepare / -Accept를 실행하지 않는다(설계자 전용)');
         }
-        if (isWorker && runsInit && scriptTokens.some((tok) => /^-(Submission|Subm\w*|Sub|Su|S|ProtectedBranches|Prot\w*|P|CrossAgentMode|Cross\w*|C|MaxVerifyFailures|Max\w*|M|Base|Bas|Ba|B)$/i.test(tok))) {
+        if (isWorker && runsInit && scriptTokens.some((tok) => /^-(Submission|Subm\w*|Sub|Su|S|ProtectedBranches|Prot\w*|P|CrossAgentMode|Cross\w*|C|MaxVerifyFailures|Max\w*|M|Base|Bas|Ba|B|TrackSpec|Track\w*)$/i.test(tok))) {
           block('작업자 세션은 init.ps1로 저장소 제출·호출 정책을 변경하지 않는다');
         }
       }
-      // git [global opts] <sub>: skip global options (-C <dir>, -c <k=v>, --git-dir <d>, --no-pager, ...) to find the real subcommand.
+
+      // Worker PR merge gate: require `--match-head-commit` so an unpushed/unaccepted remote SHA cannot be merged by mistake.
+      if (verb === 'gh' && norm(w[1] || '').toLowerCase() === 'pr' && norm(w[2] || '').toLowerCase() === 'merge') {
+        const caller = callerInfo();
+        if (caller.isWorker || /[\\/]\.worktrees([\\/]|$)/i.test(cwd)) {
+          if (!w.some((tok) => /^--match-head-commit(?:=|$)/i.test(norm(tok)))) {
+            block('작업자가 gh pr merge를 실행할 때는 수락 커밋 일치를 보장하도록 --match-head-commit <수락 SHA>를 지정해야 한다');
+          }
+        }
+      }
+
       let i = 1, gitDir = null, gitSub = '';
       if (verb === 'git') {
         while (i < w.length && norm(w[i]).startsWith('-')) {
@@ -706,16 +892,13 @@ function main() {
         gitSub = norm(w[i] || '');
       }
       const hcFile = verb === 'hc' && w[1] === 'file';
-      // Arguments to check for file names: for search commands the pattern is text, not a file, so it is left out.
-      // Files handed to a runtime as a key/certificate/env option are used, not shown (node --env-file, curl --cacert).
       let args = searchArgs(verb, w);
       if (/^(node|python|python3|py|curl|npx|deno|bun)$/i.test(verb)) args = args.replace(/--(env-file|cacert|cafile|capath|cert|key|public-key|private-key|ssl-key|ssl-cert|tls-key|tls-cert)(=|\s+)\S+/gi, ' ');
-      // 1) secret files read by a reader command (only the segment's own arguments are checked).
-      //    A bare name like `x.key` with no path separator is allowed (too many false positives such as obj.key).
-      //    For copy/move/rename commands with source and destination, the last positional argument is the destination, not read.
+
       if (READERS.test(verb) || hcFile || /^(show|diff|cat-file|grep|log)$/.test(gitSub)) {
         const isCopyMove = /^(cp|copy|copy-item|cpi|mv|move|move-item|mi|ren|rename|rename-item|rni)$/i.test(verb);
         const isViewer = VIEWERS.test(verb) || hcFile;
+        const isCurlHeaderDump = verb === 'curl' && w.some((tok) => /^(-[A-Za-z]*[vi][A-Za-z]*|--verbose|--include|--trace(?:-ascii)?)$/i.test(norm(tok)));
         let readToks = args.split(/[\s|;&<>()=,:{}'"]+/).filter(Boolean);
         if (isCopyMove) {
           const pos = readToks.filter((t) => !norm(t).startsWith('-'));
@@ -728,14 +911,20 @@ function main() {
           if ((isViewer || isCopyMove) && isTestCred(tok)) {
             block(`테스트 자격증명 파일 열람·복사 (${norm(tok)}). 테스트 도구 인자로만 쓴다`);
           }
+          if (isCurlHeaderDump && isTestCred(tok)) {
+            block(`테스트 쿠키·자격증명 파일을 curl -v/-i/--trace와 함께 쓰면 헤더 원문이 대화 기록에 남는다 (${norm(tok)}). -v/-i를 빼거나 상태 코드(-w "%{http_code}")만 확인한다`);
+          }
         }
         if (/\.env\*|\.env\?/.test(args)) block('비밀 파일 와일드카드 읽기');
       }
-      // Input redirection reads the file whatever the command is: `done < .env`, `while read l; do …; done < .env`.
-      for (const m of seg.matchAll(/<\s*([^\s<>|;&()]+)/g)) if (isSecretPath(m[1]) || isTestCred(m[1])) block(`비밀 파일을 읽는 명령 (${norm(m[1])})`);
-      // 1b) protected files (guard rails themselves): delete/move/overwrite commands and output redirection.
+
+      for (const m of unquotedSeg.matchAll(/<\s*([^\s<>|;&()]+)/g)) {
+        if (isSecretPath(m[1]) || isTestCred(m[1])) block(`비밀 파일을 읽는 명령 (${norm(m[1])})`);
+      }
+
       if (MUTATORS.test(verb) || (verb === 'sed' && /(^|\s)-i/.test(seg))) {
         const isCopy = /^(cp|copy|copy-item|cpi)$/i.test(verb);
+        const isDeleteOrMove = /^(rm|del|erase|rd|rmdir|remove-item|ri|mv|move|move-item|mi|ren|rename|rename-item|rni)$/i.test(verb);
         const pos = [];
         const destTargets = [];
         for (let idx = 1; idx < w.length; idx++) {
@@ -748,31 +937,37 @@ function main() {
         }
         const checkList = isCopy ? [...destTargets, ...(pos.length >= 2 ? pos.slice(-1) : pos)] : [...destTargets, ...pos];
         for (const tok of checkList) {
-          const why = protectedWrite(cwd, tok, false);
+          const why = protectedWrite(cwd, tok, false, isDeleteOrMove);
           if (why) block(why);
         }
       }
-      for (const m of seg.matchAll(/(?:^|[^<>&])(?:\d+)?>>?\s*("[^"]+"|'[^']+'|[^\s;|&>]+)/g)) {
-        const why = protectedWrite(cwd, m[1], false);
+
+      // Output redirection (`>`, `>>`, `1>`), excluding arrow tokens (`->`, `=>`) and masked quoted text.
+      for (const m of unquotedSeg.matchAll(/(?:^|[^<>&=-])(?:\d+)?>>?\s*("[^"]+"|'[^']+'|[^\s;|&>]+)/g)) {
+        const why = protectedWrite(cwd, m[1], false, false);
         if (why) block(why);
       }
-      // 2) the agent-kit git pre-push hook must not be skipped or redirected (it blocks main pushes for every agent).
-      //    Blocked: `git -c core.hooksPath=... <sub>`, writing core.hooksPath with `git config`, an alias that carries
-      //    --no-verify, `git send-pack` (does not run hooks). Reading, unsetting, searching and commit messages that only
-      //    mention them are allowed.
+
       if (verb === 'git' && /core\.hooksPath/i.test(w.slice(1, i).join(' '))) block('git -c core.hooksPath(pre-push 훅 우회)');
       if (gitSub === 'config' && /core\.hooksPath/i.test(seg) && !/^(get|list|unset)$/.test(w[i + 1] || '')
           && !/(^|\s)(--get|--get-all|--get-regexp|--list|-l|--unset|--unset-all)(\s|$)/.test(seg)
           && w.filter((x, idx) => idx > i && !x.startsWith('-')).length >= 2) block('git config core.hooksPath 변경(pre-push 훅 우회)');
+      // Block direct `git config agentkit.*` edits/unsets by agents (`init.ps1 -GitSetup` is the sole policy writer).
+      if (gitSub === 'config' && /\bagentkit\.[a-z]/i.test(seg) && !/^(get|list)$/.test(w[i + 1] || '')
+          && !/(^|\s)(--get|--get-all|--get-regexp|--list|-l)(\s|$)/.test(seg)) {
+        const isUnset = /(^|\s)(--unset|--unset-all|unset)(\s|$)/.test(seg);
+        const posAfterConfig = w.filter((x, idx) => idx > i && !x.startsWith('-'));
+        if (isUnset || posAfterConfig.length >= 2) {
+          block('git config agentkit.* 직접 변경 차단(저장소 정책은 init.ps1 -GitSetup으로만 변경한다)');
+        }
+      }
       if (gitSub === 'config' && /alias\./i.test(seg) && /--no-veri|hooksPath|send-pack/i.test(seg)) block('git alias로 pre-push 훅 우회');
       if (gitSub === 'send-pack') block('git send-pack(pre-push 훅을 거치지 않는 push)');
-      // --no-verify, quoted or abbreviated (git accepts any unambiguous prefix such as --no-verif)
       if (gitSub === 'push' && /(^|[\s"'])--no-veri\w*/i.test(seg)) block('git push --no-verify(pre-push 훅 우회)');
-      // 3) git push: real subcommand only, policy and branch read in the -C folder when given
       if (gitSub === 'push') {
         const pol = policyOf(gitDir);
         if (pol.local) block('push(이 저장소의 제출 방식은 local: 모든 push 차단. 바꾸려면 사용자가 init.ps1 -GitSetup -Submission으로 정한다)');
-        const rest = w.slice(i + 1).join(' ').replace(/\s#.*$/, '');   // a trailing shell comment is not a ref
+        const rest = w.slice(i + 1).join(' ').replace(/\s#.*$/, '');
         const what = `보호 브랜치(${pol.prot.join(',')}, 제출 방식 ${pol.sub})`;
         if (pol.names && new RegExp(`(^|[\\s:+"']|refs\\/heads\\/)(${pol.names})(["'\\s]|$)`).test(rest)) block(`${what}로 push`);
         const cur = currentBranch(gitDir);

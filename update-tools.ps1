@@ -42,7 +42,7 @@ foreach ($t in 'codex', 'claude', 'agy') {
     $exe = $all | Where-Object { $_ -like '*.exe' } | Select-Object -First 1
     $other = @($all | Where-Object { $_ -notlike '*.exe' })
     $note = ''
-    if (-not $exe -and $fallback[$t] -and (Test-Path -LiteralPath $fallback[$t] -PathType Leaf)) { $exe = $fallback[$t]; $note = '; not on this PATH, using installer default' }
+    if (-not $exe -and $fallback[$t] -and (Test-Path -LiteralPath $fallback[$t] -PathType Leaf -ErrorAction SilentlyContinue)) { $exe = $fallback[$t]; $note = '; not on this PATH, using installer default' }
     if ($other.Count) { $note += "; non-exe launcher also on PATH: $($other[0])" }
     if (-not $exe) {
         if ($other.Count) {

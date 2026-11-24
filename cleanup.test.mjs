@@ -1,18 +1,20 @@
-// Regression test for the sub-session delete path of cleanup.ps1 (-Parent ... -Apply). Run: node <agent-kit>/cleanup.test.mjs
-// Uses a fake `hc` (hc.cmd first on PATH) and throwaway temp folders only; nothing real is listed or deleted
-// (-Manifest points at a hand-written manifest, -Permanent keeps the Recycle Bin out of it).
+// Regression test for cleanup.ps1 (sub-session mode B + whole-machine mode A + cross-platform paths).
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync, chmodSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const KIT = dirname(fileURLToPath(import.meta.url));
+const IS_WIN = process.platform === 'win32';
+const PWSH = IS_WIN ? 'powershell' : 'pwsh';
+const PWSH_BASE = IS_WIN ? ['-NoProfile', '-ExecutionPolicy', 'Bypass'] : ['-NoProfile'];
 const TMP = mkdtempSync(join(tmpdir(), 'cleanuptest-'));
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
 
-// Fake hc: `get` answers the next line of seq.txt (JSON, FAIL = exit 1, GARBAGE = not JSON); `rm` fails when rmfail exists.
 const BIN = join(TMP, 'bin'); mkdirSync(BIN);
 writeFileSync(join(BIN, 'hc.cmd'), '@node "%~dp0mockhc.mjs" %*\r\n@exit /b %errorlevel%\r\n');
+writeFileSync(join(BIN, 'hc'), '#!/bin/sh\nexec node "$(dirname "$0")/mockhc.mjs" "$@"\n');
+if (!IS_WIN) chmodSync(join(BIN, 'hc'), 0o755);
 writeFileSync(join(BIN, 'mockhc.mjs'), `
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 const D = process.env.MOCKHC_DIR, [cmd, addr] = process.argv.slice(2);
@@ -24,13 +26,12 @@ if (cmd === 'get') {
   const line = seq[Math.min(n, seq.length - 1)];
   if (line === 'FAIL') process.exit(1);
   console.log(line === 'GARBAGE' ? 'not json' : line);
-} else if (cmd === 'ls') console.log(readFileSync(D + '/ls.json', 'utf8'));
+} else if (cmd === 'ls') console.log(existsSync(D + '/ls.json') ? readFileSync(D + '/ls.json', 'utf8') : '{"terminals":[]}');
 else if (cmd === 'rm' && existsSync(D + '/rmfail')) process.exit(1);
 `);
 const DONE = '{"state":"live","status":{"state":"done"}}', WORKING = '{"state":"live","status":{"state":"working"}}';
 
 let n = 0;
-// One isolated run: a project folder with handoff/sub-t01-review-1.md, a manifest with a child terminal t9 and that file.
 function run({ seq, groups = 'files,hc', git = null, rmfail = false }) {
   const dir = join(TMP, `case${++n}`), proj = join(dir, 'proj'), mock = join(dir, 'mock');
   mkdirSync(join(proj, 'handoff'), { recursive: true }); mkdirSync(mock);
@@ -44,9 +45,9 @@ function run({ seq, groups = 'files,hc', git = null, rmfail = false }) {
     { Id: 1, Group: 'files', Label: 'handoff/sub-t01-review-1.md', Paths: [file], Hc: null, Explicit: true, Root: proj, Bytes: 1, Newest: new Date().toISOString() },
     { Id: 2, Group: 'hc', Label: 't9 agy sub-t01-review-1 [LIVE status=done]', Paths: [], Hc: 't9', Explicit: true, Root: null, Bytes: 0, Newest: '' },
   ] }));
-  const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'cleanup.ps1'),
+  const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'),
     '-Parent', 't0', '-Manifest', manifest, '-Apply', '-Permanent', '-Groups', groups], {
-    encoding: 'utf8', env: { ...process.env, PATH: `${BIN};${process.env.PATH}`, MOCKHC_DIR: mock, LOCALAPPDATA: join(dir, 'localapp') } });
+    encoding: 'utf8', env: { ...process.env, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, LOCALAPPDATA: join(dir, 'localapp') } });
   const calls = existsSync(join(mock, 'calls.txt')) ? readFileSync(join(mock, 'calls.txt'), 'utf8') : '';
   return { r, out: r.stdout + r.stderr, fileLeft: existsSync(file), calls };
 }
@@ -94,8 +95,8 @@ const cases = [
     writeFileSync(join(d, 'last.json'), JSON.stringify({ Created: new Date().toISOString(), Days: 30, Parent: '', Items: [
       { Id: 1, Group: 'files', Label: 'victim', Paths: [victim], Hc: null, Explicit: true, Root: TMP, Bytes: 1, Newest: new Date().toISOString() } ] }));
     const later = new Date(Date.now() + 5000);
-    writeFileSync(join(d, 'mine-t0.json'), '{}'); spawnSync('powershell', ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${join(d, 'mine-t0.json')}').LastWriteTime = [datetime]'${later.toISOString()}'`]);
-    const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'cleanup.ps1'), '-Apply', '-Ids', '1', '-Permanent'],
+    writeFileSync(join(d, 'mine-t0.json'), '{}'); utimesSync(join(d, 'mine-t0.json'), later, later);
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'), '-Apply', '-Ids', '1', '-Permanent'],
       { encoding: 'utf8', env: { ...process.env, TEMP: t, TMP: t } });
     return r.status !== 0 && existsSync(victim) && /newer than the whole-PC list/.test(r.stdout + r.stderr);
   }],
@@ -108,11 +109,52 @@ const cases = [
     writeFileSync(join(mock, 'ls.json'), JSON.stringify({ terminals: [{ address: 't9', parent: 't0', state: 'finished', agent: 'agy', name: 'sub-shop-t01-research-1' }] }));
     writeFileSync(join(mock, 'seq.txt'), JSON.stringify({ state: 'finished', status: { state: 'done' }, cwd: proj,
       argv: ['agy.exe', '--mode', 'plan', '-i', `Read ${own} and follow it.`] }) + '\n');
-    const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
-      { encoding: 'utf8', env: { ...process.env, PATH: `${BIN};${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
-    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8').replace(/^﻿/, ''));
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
+    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8').replace(/^\uFEFF/, ''));
     const paths = m.Items.flatMap(i => i.Paths || []);
     return r.status === 0 && paths.some(p => /research-1\.md$/.test(p)) && !paths.some(p => /research-10/.test(p));
+  }],
+  ['AGY 작업자 로그(task-<p>-<id>.log)도 하위 세션 정리 목록에 포함', () => {
+    const dir = join(TMP, 'workerlog'), proj = join(dir, 'proj'), h = join(proj, 'handoff'), mock = join(dir, 'mock'), t = join(dir, 'temp');
+    mkdirSync(h, { recursive: true }); mkdirSync(mock); mkdirSync(t);
+    const wlog = join(h, 'task-shop-t01.log'); writeFileSync(wlog, 'log');
+    const handoffFile = join(h, 'T01.md'); writeFileSync(handoffFile, 'keep me');
+    writeFileSync(join(mock, 'ls.json'), JSON.stringify({ terminals: [{ address: 't8', parent: 't0', state: 'finished', agent: 'agy', name: 'task-shop-t01' }] }));
+    writeFileSync(join(mock, 'seq.txt'), JSON.stringify({ state: 'finished', status: { state: 'done' }, cwd: proj,
+      argv: ['agy.exe', '--mode', 'auto', '--log-file', wlog, '-i', `Read ${handoffFile} and follow it.`] }) + '\n');
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
+    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8'));
+    const paths = m.Items.flatMap(i => i.Paths || []);
+    return r.status === 0 && paths.some(p => /task-shop-t01\.log$/.test(p)) && !paths.some(p => /T01\.md$/.test(p));
+  }],
+  ['모드 A(PC 전체 기간 스캔): 오래된 세션은 수집하고 보호 파일(settings.json, memory, sqlite) 및 최신 세션은 제외', () => {
+    const dir = join(TMP, 'modeA'), fakeHome = join(dir, 'home'), mock = join(dir, 'mock'), t = join(dir, 'temp');
+    mkdirSync(mock, { recursive: true }); mkdirSync(t, { recursive: true });
+    const oldDate = new Date(Date.now() - 40 * 86_400_000);
+    const claudeProj = join(fakeHome, '.claude', 'projects', 'proj1');
+    const claudeMem = join(fakeHome, '.claude', 'projects', 'proj1', 's1', 'memory');
+    const codexSess = join(fakeHome, '.codex', 'sessions');
+    const agyConv = join(fakeHome, '.gemini', 'antigravity-ide', 'conversations');
+    mkdirSync(claudeMem, { recursive: true }); mkdirSync(codexSess, { recursive: true }); mkdirSync(agyConv, { recursive: true });
+    const oldCodex = join(codexSess, 'rollout-old.jsonl'); writeFileSync(oldCodex, '{}'); utimesSync(oldCodex, oldDate, oldDate);
+    const recentCodex = join(codexSess, 'rollout-new.jsonl'); writeFileSync(recentCodex, '{}');
+    const protectedSqlite = join(codexSess, 'state.sqlite'); writeFileSync(protectedSqlite, 'db'); utimesSync(protectedSqlite, oldDate, oldDate);
+    const protectedClaude = join(claudeProj, 's1.jsonl'); writeFileSync(protectedClaude, '{}'); utimesSync(protectedClaude, oldDate, oldDate);
+    const memFile = join(claudeMem, 'notes.md'); writeFileSync(memFile, 'keep'); utimesSync(memFile, oldDate, oldDate);
+    utimesSync(claudeMem, oldDate, oldDate); utimesSync(join(claudeProj, 's1'), oldDate, oldDate);
+    const oldAgy = join(agyConv, 'conv1.db'); writeFileSync(oldAgy, 'db'); utimesSync(oldAgy, oldDate, oldDate);
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'), '-Days', '30'],
+      { encoding: 'utf8', env: { ...process.env, USERPROFILE: fakeHome, HOME: fakeHome, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
+    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'last.json'), 'utf8'));
+    const paths = m.Items.flatMap(i => i.Paths || []);
+    return r.status === 0
+      && paths.some(p => /rollout-old\.jsonl$/.test(p))
+      && paths.some(p => /conv1\.db$/.test(p))
+      && !paths.some(p => /rollout-new\.jsonl$/.test(p))
+      && !paths.some(p => /state\.sqlite$/.test(p))
+      && !paths.some(p => /memory/.test(p));
   }],
   ['수락 검토 보고 보존: accepted.json이 가리키는 검토 보고는 정리 목록·삭제에서 제외', () => {
     const dir = join(TMP, 'accrev'), proj = join(dir, 'proj'), h = join(proj, 'handoff'), mock = join(dir, 'mock'), t = join(dir, 'temp');
@@ -125,9 +167,9 @@ const cases = [
     writeFileSync(join(mock, 'ls.json'), JSON.stringify({ terminals: [{ address: 't9', parent: 't0', state: 'finished', agent: 'agy', name: 'sub-shop-t01-review-1' }] }));
     writeFileSync(join(mock, 'seq.txt'), JSON.stringify({ state: 'finished', status: { state: 'done' }, cwd: proj,
       argv: ['agy.exe', '--mode', 'plan', '-i', `Read ${taskF} and follow it.`] }) + '\n');
-    const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
-      { encoding: 'utf8', env: { ...process.env, PATH: `${BIN};${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
-    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8').replace(/^﻿/, ''));
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
+    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8'));
     const paths = m.Items.flatMap(i => i.Paths || []);
     return r.status === 0 && /KEEP .*referenced by accepted\.json/.test(r.stdout) && paths.some(p => /review-1\.md$/.test(p)) && !paths.some(p => /review-1-report\.md$/.test(p));
   }],
@@ -143,17 +185,18 @@ const cases = [
     writeFileSync(join(mock, 'ls.json'), JSON.stringify({ terminals: [{ address: 't9', parent: 't0', state: 'finished', agent: 'codex', name: 'sub-shop-t01-review-1' }] }));
     writeFileSync(join(mock, 'seq.txt'), JSON.stringify({ state: 'finished', status: { state: 'done' }, cwd: proj,
       argv: ['codex.exe', '--no-daemon', `Read ${taskF} and follow it.`] }) + '\n');
-    const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
-      { encoding: 'utf8', env: { ...process.env, PATH: `${BIN};${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
-    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8').replace(/^﻿/, ''));
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
+    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8'));
     const paths = m.Items.flatMap(i => i.Paths || []);
     return r.status === 0 && paths.some(p => /review-1\.md$/.test(p)) && !paths.some(p => /sub-shop-t01-review-1(\\|\/|$)/.test(p));
   }],
 ];
 let bad = 0;
 for (const [name, fn] of cases) {
-  let ok = false; try { ok = fn(); } catch (e) { ok = false; }
+  let ok = false, note = '';
+  try { ok = fn(); } catch (e) { ok = false; note = '\n  ' + String(e.message || e); }
   if (!ok) bad++;
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${note}`);
 }
 console.log(bad ? `${bad} FAIL` : 'ALL PASS'); process.exit(bad ? 1 : 0);

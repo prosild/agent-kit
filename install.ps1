@@ -10,7 +10,7 @@ try {
 
 $kitRoot = $PSScriptRoot
 $kitRootSlash = $kitRoot -replace '\\', '/'
-if ($kitRootSlash -match '[\s&;|<>`"$()\[\]]') {
+if ($kitRootSlash -match '[\s&;|<>`"$()''\[\]]') {
     Write-Error "agent-kit path must not contain spaces or shell metacharacters: $kitRootSlash"
     exit 2
 }
@@ -31,27 +31,28 @@ if (-not $nodeCmd) {
     exit 2
 }
 
+function Get-PathItem([string]$Path) {
+    try { return Get-Item -LiteralPath $Path -Force -ErrorAction Stop } catch { return $null }
+}
+
 function Test-IsReparsePoint([string]$Path) {
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
-    try {
-        $item = Get-Item -LiteralPath $Path -Force
-        return [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
-    } catch {
-        return $false
-    }
+    $item = Get-PathItem $Path
+    if (-not $item) { return $false }
+    return [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
 }
 
 function Remove-ReparseLink([string]$Path) {
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
-    if (-not (Test-IsReparsePoint $Path)) { return $false }
+    $item = Get-PathItem $Path
+    if (-not $item) { return $false }
+    if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
     if ($isWinHost) {
         & cmd.exe /d /c rmdir "$Path" | Out-Null
-        if ($LASTEXITCODE -ne 0 -and (Test-Path -LiteralPath $Path)) {
+        if ($LASTEXITCODE -ne 0 -and (Get-PathItem $Path)) {
             throw "failed to remove junction: $Path"
         }
     } else {
         & rm -f "$Path"
-        if ($LASTEXITCODE -ne 0 -and (Test-Path -LiteralPath $Path)) {
+        if ($LASTEXITCODE -ne 0 -and (Get-PathItem $Path)) {
             throw "failed to remove symlink: $Path"
         }
     }
@@ -63,19 +64,20 @@ function Set-SkillLink([string]$TargetDir, [string]$SourceDir) {
     if (-not (Test-Path -LiteralPath $parent)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
-    if (Test-Path -LiteralPath $TargetDir) {
-        if (-not (Test-IsReparsePoint $TargetDir)) {
+    $existingItem = Get-PathItem $TargetDir
+    if ($existingItem) {
+        if (-not ($existingItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             Write-Warning "skip non-link directory: $TargetDir"
             return 'skipped'
         }
-        $item = Get-Item -LiteralPath $TargetDir -Force
         $existingTarget = $null
-        if ($item.PSObject.Properties['Target'] -and $item.Target) {
-            $existingTarget = ($item.Target | Select-Object -First 1)
+        if ($existingItem.PSObject.Properties['Target'] -and $existingItem.Target) {
+            $existingTarget = ($existingItem.Target | Select-Object -First 1)
         }
         if ($existingTarget) {
             try {
-                $r1 = (Resolve-Path -LiteralPath $existingTarget -ErrorAction Stop).Path.TrimEnd('\', '/')
+                $cand = if ([IO.Path]::IsPathRooted($existingTarget)) { $existingTarget } else { Join-Path $parent $existingTarget }
+                $r1 = (Resolve-Path -LiteralPath $cand -ErrorAction Stop).Path.TrimEnd('\', '/')
                 $r2 = (Resolve-Path -LiteralPath $SourceDir -ErrorAction Stop).Path.TrimEnd('\', '/')
                 if ($r1 -eq $r2) { return 'ok' }
             } catch {}
@@ -88,7 +90,7 @@ function Set-SkillLink([string]$TargetDir, [string]$SourceDir) {
             throw "failed to create junction: $TargetDir -> $SourceDir"
         }
     } else {
-        & ln -s "$SourceDir" "$TargetDir"
+        & ln -sfn "$SourceDir" "$TargetDir"
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $TargetDir)) {
             throw "failed to create symlink: $TargetDir -> $SourceDir"
         }
@@ -121,53 +123,17 @@ foreach ($root in $linkDirs) {
     }
 }
 
-foreach ($s in $skillNames) {
-    $agySkillDir = Join-Path $agySkillsRoot $s
-    $agySkillFile = Join-Path $agySkillDir 'SKILL.md'
-    if ($Uninstall) {
-        if (Test-Path -LiteralPath $agySkillFile) {
-            $raw = [IO.File]::ReadAllText($agySkillFile, [Text.Encoding]::UTF8)
-            if ($raw -match 'agent-kit' -and $raw -match [regex]::Escape("skills/$s/SKILL.md")) {
-                Remove-Item -LiteralPath $agySkillFile -Force
-                if ((Get-ChildItem -LiteralPath $agySkillDir -Force | Measure-Object).Count -eq 0) {
-                    Remove-Item -LiteralPath $agySkillDir -Force
-                }
-                $skillCount++
+# Remove legacy Antigravity connector stub files (replaced by native ~/.gemini/config/skills.json)
+foreach ($legacyName in ($skillNames + @('antigravity-delegate'))) {
+    $legacyAgyDir = Join-Path $agySkillsRoot $legacyName
+    $legacyAgyFile = Join-Path $legacyAgyDir 'SKILL.md'
+    if (Test-Path -LiteralPath $legacyAgyFile) {
+        $rawLegacy = [IO.File]::ReadAllText($legacyAgyFile, [Text.Encoding]::UTF8)
+        if ($rawLegacy -match 'agent-kit') {
+            Remove-Item -LiteralPath $legacyAgyFile -Force
+            if ((Get-ChildItem -LiteralPath $legacyAgyDir -Force | Measure-Object).Count -eq 0) {
+                Remove-Item -LiteralPath $legacyAgyDir -Force
             }
-        }
-    } else {
-        $srcFile = Join-Path (Join-Path (Join-Path $kitRoot 'skills') $s) 'SKILL.md'
-        $srcText = [IO.File]::ReadAllText($srcFile, [Text.Encoding]::UTF8)
-        $descLine = ''
-        if ($srcText -match '(?m)^description:\s*(.+)$') {
-            $descLine = $Matches[1].Trim() -replace '<agent-kit>', $kitRootSlash
-        }
-        $connector = "---`nname: $s`ndescription: $descLine`n---`n원본은 agent-kit에 있다. $kitRootSlash/skills/$s/SKILL.md 를 읽고 그대로 따른다. 이 파일에는 절차를 쓰지 않는다.`n"
-        if (-not (Test-Path -LiteralPath $agySkillDir)) {
-            New-Item -ItemType Directory -Path $agySkillDir -Force | Out-Null
-        }
-        $writeNeeded = $true
-        if (Test-Path -LiteralPath $agySkillFile) {
-            $cur = [IO.File]::ReadAllText($agySkillFile, [Text.Encoding]::UTF8)
-            if (($cur -replace "`r`n", "`n").Trim() -eq ($connector -replace "`r`n", "`n").Trim()) {
-                $writeNeeded = $false
-            }
-        }
-        if ($writeNeeded) {
-            [IO.File]::WriteAllText($agySkillFile, $connector, (New-Object System.Text.UTF8Encoding($false)))
-        }
-        $skillCount++
-    }
-}
-
-$legacyAgyDir = Join-Path $agySkillsRoot 'antigravity-delegate'
-$legacyAgyFile = Join-Path $legacyAgyDir 'SKILL.md'
-if (Test-Path -LiteralPath $legacyAgyFile) {
-    $rawLegacy = [IO.File]::ReadAllText($legacyAgyFile, [Text.Encoding]::UTF8)
-    if ($rawLegacy -match 'agent-kit') {
-        Remove-Item -LiteralPath $legacyAgyFile -Force
-        if ((Get-ChildItem -LiteralPath $legacyAgyDir -Force | Measure-Object).Count -eq 0) {
-            Remove-Item -LiteralPath $legacyAgyDir -Force
         }
     }
 }
@@ -181,7 +147,13 @@ const kitRootSlash = process.env.AGENTKIT_INSTALL_ROOT;
 const mode = process.env.AGENTKIT_INSTALL_MODE;
 const uninstall = mode === 'uninstall';
 const guardCmd = `node ${kitRootSlash}/hooks/guard.mjs`;
+const agySkillsEntry = `${kitRootSlash}/skills`;
 const isGuardCmd = (c) => typeof c === 'string' && (c.includes('/hooks/guard.mjs') || c.includes('\\hooks\\guard.mjs'));
+const isKitSkillsPath = (p) => typeof p === 'string' && (
+  p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() === agySkillsEntry.toLowerCase() ||
+  /\/agent-kit\/skills\/?$/i.test(p.replace(/\\/g, '/'))
+);
+const LEGACY_CLAUDE_MATCHER = 'Read|Edit|Write|NotebookEdit|Grep|Glob|Bash|PowerShell';
 
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
@@ -202,7 +174,7 @@ function writeJsonIfChanged(filePath, obj) {
   return true;
 }
 
-function updatePreToolUseList(list, defaultGroup) {
+function updatePreToolUseList(list, defaultGroup, upgradeClaudeMatcher = false) {
   if (!Array.isArray(list)) list = [];
   if (uninstall) {
     const filtered = [];
@@ -226,6 +198,9 @@ function updatePreToolUseList(list, defaultGroup) {
         h.command = guardCmd;
         if (!h.type) h.type = 'command';
         if (!h.timeout) h.timeout = 10;
+        if (upgradeClaudeMatcher && grp.matcher === LEGACY_CLAUDE_MATCHER) {
+          grp.matcher = '.*';
+        }
         found = true;
       }
     }
@@ -236,7 +211,8 @@ function updatePreToolUseList(list, defaultGroup) {
   return list;
 }
 
-let updatedCount = 0;
+let updatedHooks = 0;
+let agySkillsCount = 0;
 
 // 1. Claude: ~/.claude/settings.json
 const claudePath = path.join(homeDir, '.claude', 'settings.json');
@@ -249,16 +225,16 @@ if (!uninstall || fs.existsSync(claudePath)) {
     claudeObj.hooks = {};
   }
   const claudeDefault = {
-    matcher: 'Read|Edit|Write|NotebookEdit|Grep|Glob|Bash|PowerShell',
+    matcher: '.*',
     hooks: [{ type: 'command', command: guardCmd, timeout: 10, statusMessage: 'guard 검사' }]
   };
-  claudeObj.hooks.PreToolUse = updatePreToolUseList(claudeObj.hooks.PreToolUse, claudeDefault);
+  claudeObj.hooks.PreToolUse = updatePreToolUseList(claudeObj.hooks.PreToolUse, claudeDefault, true);
   if (uninstall && claudeObj.hooks.PreToolUse.length === 0) {
     delete claudeObj.hooks.PreToolUse;
     if (Object.keys(claudeObj.hooks).length === 0) delete claudeObj.hooks;
   }
   writeJsonIfChanged(claudePath, claudeObj);
-  updatedCount++;
+  updatedHooks++;
 }
 
 // 2. Codex: ~/.codex/hooks.json
@@ -271,16 +247,16 @@ if (!uninstall || fs.existsSync(codexPath)) {
   const codexDefault = {
     hooks: [{ type: 'command', command: guardCmd, timeout: 10 }]
   };
-  codexObj.hooks.PreToolUse = updatePreToolUseList(codexObj.hooks.PreToolUse, codexDefault);
+  codexObj.hooks.PreToolUse = updatePreToolUseList(codexObj.hooks.PreToolUse, codexDefault, false);
   if (uninstall && codexObj.hooks.PreToolUse.length === 0) {
     delete codexObj.hooks.PreToolUse;
     if (Object.keys(codexObj.hooks).length === 0) delete codexObj.hooks;
   }
   writeJsonIfChanged(codexPath, codexObj);
-  updatedCount++;
+  updatedHooks++;
 }
 
-// 3. Antigravity: ~/.gemini/config/hooks.json
+// 3. Antigravity: ~/.gemini/config/hooks.json & ~/.gemini/config/skills.json
 const agyPath = path.join(homeDir, '.gemini', 'config', 'hooks.json');
 if (!uninstall || fs.existsSync(agyPath)) {
   const agyObj = readJson(agyPath) || {};
@@ -297,22 +273,55 @@ if (!uninstall || fs.existsSync(agyPath)) {
     };
   }
   writeJsonIfChanged(agyPath, agyObj);
-  updatedCount++;
+  updatedHooks++;
 }
 
-process.stdout.write(String(updatedCount));
+const agySkillsJsonPath = path.join(homeDir, '.gemini', 'config', 'skills.json');
+if (!uninstall || fs.existsSync(agySkillsJsonPath)) {
+  const skillsObj = readJson(agySkillsJsonPath) || {};
+  const entries = Array.isArray(skillsObj.entries) ? skillsObj.entries : [];
+  if (uninstall) {
+    const beforeLen = entries.length;
+    skillsObj.entries = entries.filter((e) => !e || !isKitSkillsPath(e.path));
+    if (skillsObj.entries.length < beforeLen) agySkillsCount = 3;
+    if (skillsObj.entries.length === 0 && !skillsObj.inherits) {
+      if (fs.existsSync(agySkillsJsonPath)) fs.unlinkSync(agySkillsJsonPath);
+    } else {
+      writeJsonIfChanged(agySkillsJsonPath, skillsObj);
+    }
+  } else {
+    let matched = false;
+    for (const e of entries) {
+      if (e && isKitSkillsPath(e.path)) {
+        e.path = agySkillsEntry;
+        matched = true;
+      }
+    }
+    if (!matched) {
+      entries.push({ path: agySkillsEntry });
+    }
+    skillsObj.entries = entries;
+    writeJsonIfChanged(agySkillsJsonPath, skillsObj);
+    agySkillsCount = 3;
+  }
+}
+
+process.stdout.write(JSON.stringify({ hooks: updatedHooks, agySkills: agySkillsCount }));
 '@
 
 $modeArg = if ($Uninstall) { 'uninstall' } else { 'install' }
 $env:AGENTKIT_INSTALL_HOME = $HomeDir
 $env:AGENTKIT_INSTALL_ROOT = $kitRootSlash
 $env:AGENTKIT_INSTALL_MODE = $modeArg
-$hookCount = & node -e $nodeScript
+$nodeOut = & node -e $nodeScript
 Remove-Item Env:\AGENTKIT_INSTALL_HOME, Env:\AGENTKIT_INSTALL_ROOT, Env:\AGENTKIT_INSTALL_MODE -ErrorAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "failed to configure hook JSON files"
+    Write-Error "failed to configure hook/skill JSON files"
     exit 1
 }
+$parsed = $nodeOut | ConvertFrom-Json
+$hookCount = [int]$parsed.hooks
+$skillCount += [int]$parsed.agySkills
 
 if ($Uninstall) {
     Write-Output "UNINSTALL: OK (skills=$skillCount, hooks=$hookCount)"

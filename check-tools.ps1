@@ -58,6 +58,9 @@ if ($homeDir) {
             $ht = [IO.File]::ReadAllText($hp)
             if ($ht -match '<agent-kit>') { $hookIssues += "$hk hook has unresolved <agent-kit> placeholder ($hp)" }
             elseif ($ht -notmatch 'guard\.mjs') { $hookIssues += "$hk config has no guard.mjs hook registered ($hp)" }
+            elseif ($ht -match '"disableAllHooks"\s*:\s*true' -or ($hk -eq 'agy' -and $ht -match '"agent-kit-guard"\s*:\s*\{[^}]*"enabled"\s*:\s*false')) {
+                $hookIssues += "$hk guard.mjs hook is disabled ($hp)"
+            }
         } catch {}
     }
 }

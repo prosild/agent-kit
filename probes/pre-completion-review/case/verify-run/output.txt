@@ -1,9 +1,9 @@
-> Task :compileJava UP-TO-DATE
-> Task :processResources UP-TO-DATE
-> Task :classes UP-TO-DATE
-> Task :compileTestJava UP-TO-DATE
-> Task :test UP-TO-DATE
-> Task :check UP-TO-DATE
+> Task :compileJava
+> Task :processResources
+> Task :classes
+> Task :compileTestJava
+> Task :smokeTest
+HealthCheckSmokeTest > pingReturns200() PASSED
 
-BUILD SUCCESSFUL in 1s
-5 actionable tasks: 5 up-to-date
+BUILD SUCCESSFUL in 2s
+5 actionable tasks: 5 executed
