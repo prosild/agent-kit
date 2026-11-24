@@ -7,7 +7,7 @@
 2. **맥락을 모르는 하위 세션이 스펙의 빈틈을 찾는다.** 설계자와 대화한 적 없는 세션이 스펙과 스펙이 가리키는 자료·코드만 읽고, 빠진 것·모순·정의 안 된 말·코드와 안 맞는 곳·과한 곳을 찾는다. 결과물 검토는 위험한 작업에만 쓴다.
 3. **구현은 작업자에게 맡긴다.** 사용자는 설계 대화와 최종 결과 확인에만 시간을 쓴다.
 
-참고: EGM(github.com/google/elephant-goldfish-model)의 설계·독립 검토, superpowers(github.com/obra/superpowers)의 질문·작업 크기, GitHub Spec Kit clarify의 질문 항목, agent-skills(github.com/addyosmani/agent-skills)의 판정 유도 배제·반증 자료·지적 원문 대조, Harness²(github.com/google-research/harness2)의 실패 시 적응 수정·온디맨드 경험 환류·범용/특화 분리·Always-on/On-demand 구분.
+참고: EGM(github.com/google/elephant-goldfish-model)의 설계·독립 검토, superpowers(github.com/obra/superpowers)의 질문·작업 크기, GitHub Spec Kit clarify의 질문 항목, agent-skills(github.com/addyosmani/agent-skills)의 판정 유도 배제·반증 자료·지적 원문 대조, Harness²(github.com/google-research/harness2)의 조건부 작업별 제약·검증 조립·실패 시 적응 수정·온디맨드 경험 환류·범용/특화 분리·Always-on/On-demand 구분.
 
 ## 하지 않을 것
 - 사람 없이 끝까지 도는 완전 자동화.

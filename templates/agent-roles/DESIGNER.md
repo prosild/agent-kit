@@ -20,7 +20,8 @@
 - 작업 크기에 따른 분기:
   - **작은 일반 작업**(작업 하나, 되돌리기 쉬움, 비위험): 인계 파일(`handoff/<ID>.md`)이 곧 상세 스펙이다. 현황 표에 한 줄 적고 착수 확인 합의 즉시 맡긴다.
   - **큰 작업·위험한 작업**: `SPEC.md`를 먼저 갱신하고 완료 전 검토가 한 번에 읽을 수 있는 크기로 작업 ID를 나눈다(작업 ID에는 영문·숫자·`-`·`_`만 쓰고 `.`은 쓰지 않는다). 선행 `deps`가 있는 작업은 선행 작업이 base에 반영된 뒤 맡긴다.
-- `handoff/_TEMPLATE.md`를 `handoff/<ID>.md`로 복사해 채운다. 보안·권한·데이터 무결성·외부 배포 및 사용자 요청 작업은 `review: critical`, 나머지는 `normal`로 둔다.
+- `handoff/_TEMPLATE.md`를 `handoff/<ID>.md`로 복사해 채운다. 보안·권한·데이터 무결성(DB 마이그레이션)·외부 계약/배포 및 사용자 요청 작업은 `review: critical`, 나머지는 `normal`로 둔다.
+  - **작업별 맞춤 제약·검증 선제 조립**(큰 작업·`critical`·기존 테스트만으로 판정이 안 되는 작업만; 작은 일반 작업은 생략): ① 방금 읽은 코드에서 확인한 **이번 작업 고유의 금지 함정 1~3개**(건드리지 말 모듈·상태·쿼리 등, 일반론 금지)를 `하지 않을 것·제약`에 적고, ② 기존 테스트로 인수 조건 입증이 안 되면 작업자가 **저장소 안에 전용 검증 테스트·스크립트를 먼저 작성·커밋해 `verify`에 연결**하도록 지정한다(`RUNBOOK.md` 15절).
 
 ## 3. 빈틈 찾기 (무거운 프로젝트의 설계 전체 + 모든 `critical` 작업 인계)
 - 대화를 모르는 독립 검토 세션에 `<agent-kit>/skills/agent-delegate/SKILL.md` 4절의 헤드리스 명령으로 맡긴다.
@@ -31,8 +32,8 @@
 - 구현·검증·Git·배포는 작업자에게 맡긴다(맡기는 비용이 더 큰 사소한 문구 수정만 직접 수행).
 - 위임 전 Git 작업은 `verify.ps1 -Id <ID> -Prepare`로 인계·기준 커밋을 고정하고, `<agent-kit>/skills/agent-delegate/worker.md` 절차로 작업자를 실행한다. `SESSION_HANDOFF.md` 현황 표는 설계자만 갱신한다(`doing` → `review`/`blocked`/`failed` → `done`).
 - 작업자가 원인이 같은 실패를 2회 연속 겪거나 `max verify failures`에 도달하면 무작정 재시도시키지 말고 `<agent-kit>/RUNBOOK.md` 15절에 따라 인계·검증 결함부터 점검한다.
-- **수락 전 확인**:
-  - 작업자 보고(`handoff/<ID>-report.md`)와 `OUT` 폴더의 `summary.txt`·`changed.txt`·`test-changes.txt`·`diff.patch`, `SPEC-CHANGED`·`EVIDENCE` 신호를 확인한다(`critical`이면 검토 보고의 `판정: 진행 가능 | 높음 0` 확인).
+- **수락 전 확인** (`normal` 작업은 설계자가 유일한 코드 검토자다):
+  - 작업자 보고 요약만 보지 않고 `OUT` 폴더의 `diff.patch`·`test-changes.txt`·`changed.txt`·`summary.txt`와 `SPEC-CHANGED`·`EVIDENCE` 신호를 직접 대조해 **인수 조건 미충족·테스트 삭제/약화·범위 밖 수정**이 없는지 확인한다(`critical`은 독립 검토 보고의 `판정: 진행 가능 | 높음 0`까지 확인).
   - 보고에 **`남긴 위험`**이나 **`설계자 결정 필요`**가 있으면 **수락 전에 먼저 사용자 결정을 받아 `SPEC.md` '결정'에 기록**한다.
 - **경량 수락 실행**:
   - 자동 검증 작업: `verify.ps1 -Id <ID> -Accept`(`critical`은 `-ReviewedCommit <전체 해시> -ReviewReport <보고 경로>` 추가; 테스트 명령 재실행 없이 작업자의 통과 증거·해시·클린 트리를 즉시 검증해 서명함).

@@ -22,5 +22,5 @@
 | 2026-11-19 | 실사용 웹 프로젝트 T04~T05 + 3사 검토 | 범용 | Codex 전역 `hc`·`verify.ps1`·`init.ps1` 허용의 하위 세션·전역 설정 노출 | `guard.test.mjs` (`sub-rev-caller`, `worker-caller`) | 반영 |
 | 2026-11-19 | 실사용 웹 프로젝트 T05 | 범용 | 실제 대상(VM·운영 DB) vs 대체(로컬·모의) 환경 완료 기준 미구분 | `DESIGNER.md`, `WORKER.md` 환경 표기 | 반영 |
 | 2026-11-19 | `agent-kit` 실사용 | 범용 | PC 전체 AGY 단일 턴 강제 직렬화가 정상 병행 AGY 작업까지 차단 (`WORKER.md` 잔재 포함 제거) | `guard.test.mjs` (`rate-cooldown`), `WORKER.md` | 반영 |
-| 2026-11-20 | Harness² 외부 아이디어(원칙 13) | 재평가 | Always-on 지침에 들어간 선제적 하네스 조립 문구는 덜어내고, 반복 실패 시 On-demand `RUNBOOK 15절` 진단·수정과 온디맨드 회고만 유지 | `RUNBOOK.md` 15절, `DESIGNER.md` | 축소 유지 |
+| 2026-11-20 | Harness² 외부 아이디어(원칙 13) | 재평가 | 별도 파일 없는 인계 내 조건부 선제 조립(큰·`critical`·테스트 부재 작업의 고유 함정·저장소 내 전용 검증 연결) + 반복 실패 시 `RUNBOOK 15절` 1회 수정·온디맨드 회고로 정제 유지 | `DESIGNER.md`, `_TEMPLATE.md`, `RUNBOOK.md` 15절 | 정제 유지 |
 | 2026-11-24 | `agent-kit` 5개 독립 세션 감사 | 범용 | AGY `GEMINI.md`+스텁 스킬 이중 읽기, `-Accept` 중복 테스트·상태 덮어쓰기, `direct` 수동 검증 push 데드락, Rust `cargo test` 오탐, `guard.mjs` `.codex/*`·`hc exec`·`..` 구멍과 커밋 화살표 오탐, `hc keys` 대리 승인 위험, 비Windows 백슬래시·심볼릭 링크 파손 | 회귀 테스트 6종 전수 보강 | 반영 |

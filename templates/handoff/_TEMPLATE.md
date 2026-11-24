@@ -4,7 +4,7 @@ review: normal
 verify: -
 ---
 <!-- id: 영문·숫자·'-'·'_'만 사용('.'은 hc --name에서 거부되므로 쓰지 않는다).
-     review: normal | critical. 보안·권한·데이터 무결성·외부 배포 작업과 사용자가 검토를 요청한 작업이면 critical.
+     review: normal | critical. 보안·권한·데이터 무결성(DB 마이그레이션)·외부 계약/배포 작업과 사용자가 검토를 요청한 작업이면 critical.
      verify: 파일을 수정하지 않는 자동 검사 명령 한 줄(Windows는 cmd, macOS·Linux는 /bin/sh 기준; 예: npm run lint && npm test). 명령이 없거나 비Git이면 -와 수동 증거를 쓴다. 캐시로 건너뛰는 빌드 도구는 재실행 플래그(예: --rerun-tasks)를 포함한다.
      선택 머리말: base: <비교 ref> / deps: [T01] / worktree: <저장소 루트>/.worktrees/<소문자 id> <브랜치> (병렬 작업, RUNBOOK 5절). -->
 ## 목표
@@ -17,6 +17,7 @@ verify: -
 <착수 확인에서 기본값으로 합의한 것(실패·잘못된 입력·빈 값 처리 정책 등)>
 
 ## 하지 않을 것·제약
+<코드에서 확인한 이 작업 고유의 금지 함정·건드리지 말 모듈/상태(일반론 금지). 기존 테스트로 판정이 안 되는 큰·critical 작업은 저장소 내 전용 검증 테스트·스크립트 선행 작성과 verify 연결을 명시>
 
 ## 참고
 <읽을 파일, 이미 정한 결정>
