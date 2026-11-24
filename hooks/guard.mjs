@@ -198,8 +198,11 @@ function protectedWrite(cwd, p, keepsGuard, isDirDeleteOrMove = false) {
   const ap = absPath(cwd, np);
   const rp = realAbsPath(cwd, np);
   const inKitCwd = inKit(absPath(cwd, '.')) || inKit(realAbsPath(cwd, '.'));
-  const caller = callerInfo();
-  const isWorkerOrSub = !!(caller.isWorker || caller.subStem || /[\\/]\.worktrees([\\/]|$)/i.test(cwd));
+  const isWorkerOrSub = () => {
+    if (/[\\/]\.worktrees([\\/]|$)/i.test(cwd)) return true;
+    const caller = callerInfo();
+    return !!(caller.isWorker || caller.subStem);
+  };
   if (/(^|\/)\.git\/(hooks(\/|$)|config$)/.test(ap) || /(^|\/)\.git\/(hooks(\/|$)|config$)/.test(rp)) {
     return `Git 훅·설정 파일 변경 (${p}). pre-push 훅은 init.ps1이 설치한다`;
   }
@@ -220,12 +223,12 @@ function protectedWrite(cwd, p, keepsGuard, isDirDeleteOrMove = false) {
     }
   }
   if ((inKit(ap) || inKit(rp)) && !inKitCwd) return `다른 프로젝트 세션에서 agent-kit 파일 변경 (${p}). 키트 수정은 agent-kit 폴더 세션에서만 한다`;
-  if ((inKit(ap) || inKit(rp)) && /\/local-defaults\.json$/.test(ap) && isWorkerOrSub) return `작업자·하위 세션에서 local-defaults.json 변경 (${p}). 로컬 기본 모델은 사용자가 관리한다`;
+  if ((inKit(ap) || inKit(rp)) && /\/local-defaults\.json$/.test(ap) && isWorkerOrSub()) return `작업자·하위 세션에서 local-defaults.json 변경 (${p}). 로컬 기본 모델은 사용자가 관리한다`;
   const isGlobalCfg = GLOBAL_AGENT_FILES.includes(ap) || GLOBAL_AGENT_FILES.includes(rp)
     || GLOBAL_AGENT_DIRS.some((d) => inDir(ap, d) || inDir(rp, d))
     || (isDirDeleteOrMove && [...GLOBAL_AGENT_FILES, ...GLOBAL_AGENT_DIRS].some((d) => inDir(d, ap) || inDir(d, rp)));
   const isProjectCfg = PROJECT_CFG_RX.test(ap) || PROJECT_CFG_RX.test(rp);
-  if ((isGlobalCfg || isProjectCfg) && (!inKitCwd || isWorkerOrSub)) return `에이전트 권한·훅 설정 파일 변경 (${p}). 권한 설정은 사용자가 직접 관리한다`;
+  if ((isGlobalCfg || isProjectCfg) && (!inKitCwd || isWorkerOrSub())) return `에이전트 권한·훅 설정 파일 변경 (${p}). 권한 설정은 사용자가 직접 관리한다`;
   if ((REGISTRATION.includes(ap) || REGISTRATION.includes(rp)) && !keepsGuard) return `훅 등록 파일에서 guard를 빼거나 비활성화·미치환 경로(<agent-kit>)로 바꾸는 변경 (${p})`;
   return null;
 }
@@ -293,7 +296,18 @@ function stripOuterQuotes(s) {
   return t;
 }
 
-// Extract nested shell scripts passed via `powershell -Command "..."`, `bash -c "..."`, `cmd /c "..."` so role/file
+function cmdScriptIndex(w) {
+  if (!/^cmd$/i.test(verbOf(w[0] || ''))) return -1;
+  for (let idx = 1; idx < w.length; idx++) {
+    const t = norm(w[idx]);
+    if (/^\/[ck]$/i.test(t)) return idx + 1 < w.length ? idx + 1 : -1;
+    if (/^\/(?:[dsqua]|e:(?:on|off)|v:(?:on|off)|t:[0-9a-f]{1,2})$/i.test(t)) continue;
+    break;
+  }
+  return -1;
+}
+
+// Extract nested shell scripts passed via `powershell -Command "..."`, `bash -c "..."`, `cmd [/d] /c "..."` so role/file
 // checks cannot be bypassed by wrapping a command in a nested shell string.
 function expandNestedShellScripts(segs, depth = 0) {
   if (depth >= 2) return segs;
@@ -314,9 +328,12 @@ function expandNestedShellScripts(segs, depth = 0) {
         const inner = stripOuterQuotes(w[k + 1]);
         if (inner && inner !== seg) out.push(...expandNestedShellScripts(segments(inner), depth + 1));
       }
-    } else if (v === 'cmd' && /^\/[ck]$/i.test(norm(w[1] || '')) && w[2]) {
-      const inner = stripOuterQuotes(w.slice(2).join(' '));
-      if (inner && inner !== seg) out.push(...expandNestedShellScripts(segments(inner), depth + 1));
+    } else {
+      const ci = cmdScriptIndex(w);
+      if (ci > 0) {
+        const inner = stripOuterQuotes(w.slice(ci).join(' '));
+        if (inner && inner !== seg) out.push(...expandNestedShellScripts(segments(inner), depth + 1));
+      }
     }
   }
   return out;
@@ -340,8 +357,9 @@ function words(seg, unwrapCmdScript = false) {
   const w = rawWords(seg);
   for (let n = 0; n < 8; n++) {
     const a = w[0] || '';
-    if (/^cmd$/i.test(verbOf(a)) && /^\/[ck]$/i.test(w[1] || '')) {
-      w.splice(0, 2);
+    const ci = cmdScriptIndex(w);
+    if (ci > 0) {
+      w.splice(0, ci);
       const script = w[0]?.replace(/^(["'])(.*)\1$/, '$2');
       if (unwrapCmdScript && script !== w[0]) return words(script);
     } else if (/^hc$/i.test(verbOf(a)) && /^exec$/i.test(w[hcSubcommandIndex(w)] || '')) {
@@ -386,11 +404,19 @@ function hcRunInfo(w) {
 function extractAgyPrompt(agyArgs) {
   for (let idx = 0; idx < agyArgs.length; idx++) {
     const o = norm(agyArgs[idx]);
-    if (/^(?:-i|-p|--prompt(?:-interactive)?|--print)$/i.test(o) && agyArgs[idx + 1] !== undefined) {
+    if (/^(?:-i|-p|--prompt(?:-interactive)?|--print)$/i.test(o) && agyArgs[idx + 1] !== undefined && !norm(agyArgs[idx + 1]).startsWith('-')) {
       return agyArgs[idx + 1];
     }
     const m = /^(?:--prompt(?:-interactive)?|--print)=(.*)$/i.exec(o);
     if (m) return m[1];
+  }
+  const valueFlags = /^--(?:model|mode|settings|log-file|add-dir|workspace|cwd)$/i;
+  for (let idx = 0; idx < agyArgs.length; idx++) {
+    const o = norm(agyArgs[idx]);
+    if (o === '--') return agyArgs[idx + 1] || '';
+    if (valueFlags.test(o)) { idx++; continue; }
+    if (o.startsWith('-')) continue;
+    return agyArgs[idx];
   }
   return agyArgs.at(-1) || '';
 }
@@ -438,13 +464,20 @@ let callerCache;
 function callerInfo() {
   if (callerCache !== undefined) return callerCache;
   const id = String(process.env.HC_TERMINAL_ID || '').trim();
+  const roleEnv = String(process.env.AGENTKIT_ROLE || '').trim();
+  // Explicit sub-session role (`AGENTKIT_ROLE=sub-...`) strictly narrows privileges and overrides an inherited parent
+  // HC_TERMINAL_ID without spawning `hc get`. Non-sub roleEnv values cannot clear a worker terminal's identity (`hcName`).
+  const envSub = /^((?:sub|agy)-[a-z0-9_.-]+-(?:review|research|flash)-\d+)$/i.exec(roleEnv)
+    || /^sub:([a-z0-9_.-]+)$/i.exec(roleEnv);
+  if (envSub) {
+    const stem = envSub[1].toLowerCase();
+    callerCache = { id, name: stem, subStem: stem, isWorker: false };
+    return callerCache;
+  }
   const t = id ? hcGetTerminal(id) : null;
   const hcName = typeof t?.name === 'string' ? t.name : '';
-  const roleEnv = String(process.env.AGENTKIT_ROLE || '').trim();
   const name = hcName || roleEnv;
-  const sub = /^((?:sub|agy)-[a-z0-9_.-]+-(?:review|research|flash)-\d+)$/i.exec(hcName)
-    || /^((?:sub|agy)-[a-z0-9_.-]+-(?:review|research|flash)-\d+)$/i.exec(roleEnv)
-    || (/^sub:([a-z0-9_.-]+)$/i.exec(roleEnv));
+  const sub = /^((?:sub|agy)-[a-z0-9_.-]+-(?:review|research|flash)-\d+)$/i.exec(hcName);
   const isWorker = /^task-[a-z0-9_.-]+$/i.test(hcName) || /^(worker|task-[a-z0-9_.-]+)$/i.test(roleEnv);
   callerCache = { id, name, subStem: sub ? sub[1].toLowerCase() : null, isWorker };
   return callerCache;
@@ -754,7 +787,12 @@ function main() {
       const verb = verbOf(w[0]);
       const hcInfo = /^hc$/i.test(verb) ? hcRunInfo(w) : null;
       const hcRun = !!hcInfo;
+      const isAgentCli = /^(claude|codex|agy|antigravity|gemini)$/i.test(verb);
       if (BYPASS.test(seg) && (LAUNCHERS.test(verb) || hcRun)) block('권한·훅 우회 플래그');
+      if (isAgentCli && !w.slice(1).every((x) => /^(--help|-h|--version|-v)$/i.test(norm(x))) && !(w.length === 2 && /^models$/i.test(norm(w[1])))) {
+        const activeSub = agySub?.stem || callerInfo().subStem;
+        if (activeSub) block(`하위 세션(${activeSub})은 다른 에이전트 CLI(${verb})를 실행하지 않는다`);
+      }
       if (hcRun && /(^|\s)--(parent|outlive-parent)\b/.test(seg)) block('hc run의 부모 추적을 바꾸는 옵션');
       if (hcRun && /^task-[a-z0-9_.-]+$/i.test(hcInfo.name || '') && (/[\\/]\.worktrees([\\/]|$)/i.test(cwd) || callerInfo().isWorker)) {
         block('작업자 세션은 다른 작업자(task-*)를 실행하지 않는다');
@@ -762,8 +800,11 @@ function main() {
       if (hcRun && hcInfo.targetVerb === 'codex' && !hcInfo.optTokens.some((t) => /^--no-daemon$/i.test(norm(t)))) {
         block('hc run으로 codex를 띄울 때는 --no-daemon이 필요하다(없으면 부모 추적이 끊긴다)');
       }
-      if (hcRun && hcInfo.name) {
-        const revCap = /^((?:sub|agy)-[a-z0-9_.-]*-review-(\d+))$/i.exec(hcInfo.name);
+      const revTarget = (hcRun && hcInfo.name) ? hcInfo.name
+        : isAgentCli ? (/(?:handoff[\\/]|AGENTKIT_ROLE\s*=\s*["']?)((?:sub|agy)-[a-z0-9_.-]*-review-\d+)(?:\.md\b|["'\s]|$)/i.exec(seg)?.[1] || '')
+        : '';
+      if (revTarget) {
+        const revCap = /^((?:sub|agy)-[a-z0-9_.-]*-review-(\d+))$/i.exec(revTarget);
         if (revCap && Number.parseInt(revCap[2], 10) > 4) block(`하위 검토 세션(${revCap[1]})의 누적 실행 번호가 상한(4: 빈틈 검토 2회 + 완료 전 검토 2회)을 넘었다. 상위 세션이나 사용자에게 보고한다`);
       }
       if (/^(node|python|python3|py|deno|bun|powershell|pwsh)$/i.test(verb)) {
@@ -791,16 +832,22 @@ function main() {
         const modeValue = modeIdx >= 0 ? norm(agyArgs[modeIdx + 1] || '').toLowerCase()
           : modeEq ? norm(modeEq).slice(7).toLowerCase() : '';
         if (modeValue === 'auto' && !agyWorker) block('agy --mode auto는 작업자(task-<id>) 실행에만 쓴다');
-        const sub = hcRun && hcInfo.name ? /^((?:sub|agy)-[a-z0-9_.-]*-(?:review|research)-\d+)$/i.exec(hcInfo.name) : null;
+        const isDirectAgyLaunch = !hcRun && agyArgs.some((o) => /^(?:-i|-p|--prompt(?:-interactive)?|--print)(?:=|$)/i.test(norm(o)));
+        const promptText = (hcRun || isDirectAgyLaunch) ? extractAgyPrompt(agyArgs) : '';
+        const directSubMatch = isDirectAgyLaunch
+          ? (/handoff[\\/]((?:sub|agy)-[a-z0-9_.-]*-(?:review|research)-\d+)\.md\b/i.exec(promptText)
+            || /AGENTKIT_ROLE\s*=\s*["']?((?:sub|agy)-[a-z0-9_.-]*-(?:review|research)-\d+)/i.exec(seg))
+          : null;
+        const sub = hcRun && hcInfo.name
+          ? /^((?:sub|agy)-[a-z0-9_.-]*-(?:review|research)-\d+)$/i.exec(hcInfo.name)
+          : directSubMatch;
         if (sub) {
-          const promptText = extractAgyPrompt(agyArgs);
           if (!new RegExp(`handoff[\\\\/]${reEsc(sub[1])}\\.md`, 'i').test(promptText)) {
             block(`하위 세션(${sub[1]})의 시작 문장에 handoff/${sub[1]}.md가 없다`);
           }
           if (modeValue !== 'plan') block(`하위 세션(${sub[1]})은 --mode plan으로 띄운다(모드를 주지 않으면 auto 모드로 돈다)`);
         }
-        const isDirectAgyLaunch = !hcRun && agyArgs.some((o) => /^(?:-i|-p|--prompt(?:-interactive)?|--print)(?:=|$)/i.test(norm(o)));
-        if (isDirectAgyLaunch) rateActions.push({ kind: 'run', agy: true, name: '' });
+        if (isDirectAgyLaunch) rateActions.push({ kind: 'run', agy: true, name: sub ? sub[1].toLowerCase() : '' });
       }
       if (verb !== 'hc') continue;
       const hcIndex = hcSubcommandIndex(w);

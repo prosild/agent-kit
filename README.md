@@ -6,7 +6,7 @@
 
 ## 핵심 구조와 특징
 
-![agent-kit 워크플로](./assets/workflow.png)
+![agent-kit 워크플로](./assets/workflow.svg)
 
 1. **만든 쪽과 확인하는 쪽의 철저한 분리 (`DESIGNER` / `REVIEWER` / `WORKER`)**
    - **설계자**: 코드를 직접 쓰지 않고 사용자와 대화하며 목표·완료 기준·하지 않을 것·결정 이유를 `SPEC.md`와 작업별 인계 파일(`handoff/<ID>.md`)로 만든다.
@@ -89,5 +89,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $s -Distro Ubuntu         # 
 
 ## 고칠 때
 - **배치 위치와 중복 먼저 확인(원칙 1·3)**: 새 규칙은 먼저 필요할 때만 읽는 곳(`RUNBOOK.md`·`skills/`·스크립트·훅)에 둘 수 있는지 본다. 항상 읽는 지침(`templates/AGENTS.md`·역할 파일)에 넣어야 할 때는 중복·낡은 문장을 함께 덜어낸다.
-- **회귀 테스트 + 행동 대조**: 훅·`install.ps1`·`init.ps1`·`verify.ps1`·`cleanup.ps1`·`update-tools.ps1`을 고치면 회귀 테스트 6종(`node hooks/guard.test.mjs`, `node hooks/pre-push.test.mjs`, `node install.test.mjs`, `node verify.test.mjs`, `node cleanup.test.mjs`, `node update-tools.test.mjs`)을 돌린다. 역할 지침의 핵심 절차를 고치면 `probes/README.md`의 변경 전/후 행동 대조로 회귀를 확인한다.
+- **회귀 테스트 + 행동 대조**: 훅·`install.ps1`·`init.ps1`·`verify.ps1`·`cleanup.ps1`·`update-tools.ps1`을 고치면 `node test.mjs`(회귀 테스트 6종 일괄 실행)를 돌린다. 역할 지침의 핵심 절차를 고치면 `probes/README.md`의 변경 전/후 행동 대조로 회귀를 확인한다.
 - **경험 환류와 병합**: 프로젝트 회고(`handoff/retro.md`)에서 채택한 `[범용 / Invariant]` 교훈을 반영하면 `EXPERIENCE.md` 표에 패턴·검증 테스트를 남기고, 템플릿 변경은 기존 프로젝트에 RUNBOOK 11절(병합)로 반영한다.

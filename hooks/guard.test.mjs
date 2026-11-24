@@ -1,7 +1,7 @@
 // Regression test for guard.mjs. Run: node <agent-kit>/hooks/guard.test.mjs (tests the guard.mjs next to it)
 // Creates a throwaway repo (main) + worktree (feat) in the temp folder to check push rules.
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -448,6 +448,7 @@ writeFileSync(GLOBAL, '[agentkit]\n\tsubmission = direct\n\tprotectedBranches = 
 // Stub only the read-only Herdr lookup. Regression tests never inspect or send to a real terminal.
 const mockHc = `data:text/javascript,${encodeURIComponent(`
   import childProcess from 'node:child_process';
+  import { appendFileSync } from 'node:fs';
   import { syncBuiltinESMExports } from 'node:module';
   const original = childProcess.execFileSync;
   const facts = {
@@ -463,6 +464,9 @@ const mockHc = `data:text/javascript,${encodeURIComponent(`
   };
   childProcess.execFileSync = (file, args, opts) => {
     if (file !== 'hc') return original(file, args, opts);
+    if (process.env.AGENTKIT_TEST_HC_LOG) {
+      appendFileSync(process.env.AGENTKIT_TEST_HC_LOG, '1\\n');
+    }
     if (args.slice(0, -1).join(' ') !== 'get --json --' || opts.env.HC_TERMINAL_ID || opts.timeout !== 2000) {
       throw new Error('unexpected Herdr lookup parameters');
     }
@@ -474,13 +478,14 @@ const mockHc = `data:text/javascript,${encodeURIComponent(`
   syncBuiltinESMExports();
 `)}`;
 let bad = 0;
-function runGuard(ev, { callerId = 'test-caller', rateFile = 'off', nowMs = '' } = {}) {
+function runGuard(ev, { callerId = 'test-caller', rateFile = 'off', nowMs = '', roleEnvOverride, hcLog = '' } = {}) {
   const isManualWorker = callerId === 'manual-worker';
   const isManualSub = callerId === 'manual-sub';
   const hcId = (isManualWorker || isManualSub) ? '' : callerId;
-  const roleEnv = isManualWorker ? 'worker' : isManualSub ? 'sub-demo-t01-review-1' : '';
+  const roleEnv = roleEnvOverride !== undefined ? roleEnvOverride : (isManualWorker ? 'worker' : isManualSub ? 'sub-demo-t01-review-1' : '');
   const env = { ...process.env, AGENT_GUARD_TEST: '1', GIT_CONFIG_GLOBAL: GLOBAL, HC_TERMINAL_ID: hcId, AGENTKIT_ROLE: roleEnv, AGENTKIT_RATE_FILE: rateFile };
   if (nowMs) env.AGENTKIT_NOW_MS = String(nowMs);
+  if (hcLog) env.AGENTKIT_TEST_HC_LOG = hcLog;
   const r = spawnSync('node', ['--import', mockHc, GUARD], { input: JSON.stringify(ev), env });
   const pre = ev.hook_event_name === 'PreToolUse' && !ev.toolCall;
   let got = r.status === 2 ? (pre ? 'EXIT2' : 'BLOCK') : r.status === 0 ? 'ALLOW' : 'ERR' + r.status;
@@ -546,5 +551,23 @@ const agyLaunch = (stem) => bash(`hc run --bg --name ${stem} --cwd C:/p -- agy.e
     runGuard(bash('hc keys task-t01 enter'), { rateFile: rf, nowMs: T0 + 20_000 + i * 1000 });
   }
   checkRate('루프 방지: 같은 대상 2분 내 11번째 hc keys 차단', 'BLOCK', bash('hc keys task-t01 enter'), { rateFile: rf, nowMs: T0 + 35_000 }, '2분 내 10회');
+}
+// 5) 헤드리스 검토 정합성 + callerInfo 우선순위 + 일반 편집 지연 호출(0 hc spawn) + cmd /d /c 언래핑
+{
+  checkRate('헤드리스 검토: claude -p 에서 -review-5 상한 차단', 'BLOCK', bash(`claude -p --permission-mode dontAsk -- "Read handoff/sub-p-t01-review-5.md and follow it."`), { rateFile: 'off' }, '상한(4');
+  checkRate('헤드리스 검토: codex exec 에서 -review-5 상한 차단', 'BLOCK', bash(`codex exec "Read C:/p/handoff/sub-p-t01-review-5.md and follow it."`), { rateFile: 'off' }, '상한(4');
+  checkRate('헤드리스 검토: claude -p 에서 -review-4 까지는 허용', 'ALLOW', bash(`claude -p --permission-mode dontAsk -- "Read handoff/sub-p-t01-review-4.md and follow it."`), { rateFile: 'off' });
+  checkRate('헤드리스 검토: 직행 agy -p 하위 세션에 --mode plan 누락 시 차단', 'BLOCK', bash(`agy.exe -p --sandbox "Read C:/p/handoff/sub-p-t01-review-1.md and follow it."`), { rateFile: 'off' }, '--mode plan으로 띄운다');
+  checkRate('헤드리스 검토: 직행 agy -p --mode plan 하위 세션 허용', 'ALLOW', bash(`agy.exe -p --mode plan --sandbox "Read C:/p/handoff/sub-p-t01-review-1.md and follow it."`), { rateFile: 'off' });
+  checkRate('역할 우선순위: 부모가 worker 터미널이어도 AGENTKIT_ROLE=sub-... 자식은 하위 세션으로 verify.ps1 차단', 'BLOCK', bash('powershell -File C:/kit/verify.ps1 -Id T01'), { callerId: 'worker-caller', roleEnvOverride: 'sub-demo-t01-review-1' }, '하위 세션(sub-demo-t01-review-1)');
+  checkRate('역할 상승 방지: worker 터미널이 AGENTKIT_ROLE=designer를 줘도 -Accept는 계속 차단', 'BLOCK', bash('powershell -File C:/kit/verify.ps1 -Id T01 -Accept'), { callerId: 'worker-caller', roleEnvOverride: 'designer' }, '설계자 전용');
+  checkRate('하위 세션 재귀 스폰 차단: sub-* 세션에서 다른 claude -p 실행 차단', 'BLOCK', bash(`claude -p "do work"`), { callerId: 'manual-sub' }, '다른 에이전트 CLI');
+  checkRate('중첩 cmd /d /c 언래핑: git push --no-verify 차단', 'BLOCK', bash(`cmd /d /c "git push --no-verify -u origin feat"`, R + '/repo-wt'), { rateFile: 'off' }, '--no-verify');
+  checkRate('중첩 cmd /s /c 언래핑: 비밀 파일 열람 차단', 'BLOCK', bash(`cmd.exe /s /c "type C:/p/.env"`), { rateFile: 'off' }, '비밀 파일');
+  const hcLog = join(TMP, 'hc-spawn-count.log');
+  const wRes = runGuard({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'C:/p/src/index.ts', content: 'export const x = 1;\n' }, cwd: 'C:/p' }, { callerId: 'worker-caller', hcLog });
+  const zeroSpawnsOnNormalWrite = wRes.got === 'ALLOW' && !existsSync(hcLog);
+  if (!zeroSpawnsOnNormalWrite) bad++;
+  console.log(`${zeroSpawnsOnNormalWrite ? 'PASS' : 'FAIL'}  LAZY  일반 소스 파일 Write 시 동기 hc get 프로세스 미호출(0회)`);
 }
 console.log(bad ? `${bad} FAIL` : 'ALL PASS'); process.exit(bad ? 1 : 0);

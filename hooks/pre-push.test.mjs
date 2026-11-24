@@ -112,12 +112,23 @@ const cases = [
     writeFileSync(`${DIRECT}/handoff/T01/approved.json`, '{"version":1}\n');
     return blocked(push(['feat:main'], DIRECT)) && blocked(push(['--delete', 'main'], DIRECT));
   }],
-  ['허용: direct에서 accepted.json의 commit과 일치하면 main push 허용', () => {
+  ['허용: direct에서 accepted.json의 commit과 일치하면 main push 허용 (원격 미반영 상태의 추가 미수락 커밋은 차단)', () => {
     const sha = git(['rev-parse', 'feat'], DIRECT).stdout.trim();
     writeFileSync(`${DIRECT}/handoff/T01/accepted.json`, JSON.stringify({ commit: sha }) + '\n');
-    const ok = push(['feat:main'], DIRECT).status === 0;
+    git([...id, 'commit', '-q', '--allow-empty', '-m', 'extra unaccepted on feat'], DIRECT);
+    const extraBlocked = blocked(push(['feat:main'], DIRECT));
+    sh(`git reset -q --hard ${sha}`, DIRECT);
+    return extraBlocked && push(['feat:main'], DIRECT).status === 0;
+  }],
+  ['허용: 완료된 작업(accepted commit이 이미 원격 main에 반영됨)만 남았을 때는 이후 일반 수동 커밋 push 허용, 새 미수락 작업(T02) 시작 시 다시 차단', () => {
+    git([...id, 'commit', '-q', '--allow-empty', '-m', 'manual hotfix after T01 settled'], DIRECT);
+    const manualOk = push(['feat:main'], DIRECT).status === 0;
+    mkdirSync(`${DIRECT}/handoff/T02`, { recursive: true });
+    writeFileSync(`${DIRECT}/handoff/T02/approved.json`, '{"version":1}\n');
+    git([...id, 'commit', '-q', '--allow-empty', '-m', 'unaccepted T02'], DIRECT);
+    const newTaskBlocked = blocked(push(['feat:main'], DIRECT));
     rmSync(`${DIRECT}/handoff`, { recursive: true, force: true });
-    return ok;
+    return manualOk && newTaskBlocked;
   }],
   ['하위 폴더 저장소(-ProjectRoot): 상위 폴더의 handoff/approved.json도 direct pre-push가 검증', () => {
     const extProj = `${TMP}/ext-proj`;

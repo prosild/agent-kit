@@ -47,24 +47,35 @@ while read local_ref local_sha remote_ref remote_sha; do
   if [ "$sub" = "direct" ]; then
     case ",$direct_base," in
       *",$b,"*)
-        has_approved=0
+        has_any_approved=0
+        active_approved=0
         matched=0
+        zero_sha="0000000000000000000000000000000000000000"
         for root in "$proj_cfg" "$top" "$main_root"; do
           [ -n "$root" ] && [ -d "$root/handoff" ] || continue
           for f in "$root"/handoff/*/approved.json; do
-            [ -f "$f" ] && has_approved=1 && break
-          done
-          if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
-            for f in "$root"/handoff/*/accepted.json; do
-              [ -f "$f" ] || continue
-              if grep -Eq "\"commit\"[[:space:]]*:[[:space:]]*\"$local_sha\"" "$f" 2>/dev/null; then
-                matched=1
-                break
+            [ -f "$f" ] || continue
+            has_any_approved=1
+            tdir=$(dirname "$f")
+            acc="$tdir/accepted.json"
+            settled=0
+            if [ -f "$acc" ]; then
+              acc_sha=$(sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]\{40\}\)".*/\1/p' "$acc" | head -n 1 | tr '[:upper:]' '[:lower:]')
+              if [ -n "$acc_sha" ]; then
+                [ "$acc_sha" = "$local_sha" ] && matched=1
+                if [ "$remote_sha" != "$zero_sha" ] && [ -n "$remote_sha" ] && git merge-base --is-ancestor "$acc_sha" "$remote_sha" 2>/dev/null; then
+                  settled=1
+                fi
               fi
-            done
-          fi
+            fi
+            [ "$settled" = "0" ] && active_approved=1
+          done
         done
-        if [ "$has_approved" = "1" ] && [ "$matched" = "0" ]; then
+        if [ "$local_sha" = "$zero_sha" ] && [ "$has_any_approved" = "1" ]; then
+          echo "[agent-kit pre-push] blocked: deleting base branch $b is not allowed in direct mode while handoff tasks exist." >&2
+          exit 1
+        fi
+        if [ "$active_approved" = "1" ] && [ "$matched" = "0" ]; then
           echo "[agent-kit pre-push] blocked: direct push to $b requires an accepted commit in handoff/*/accepted.json matching $local_sha (run verify.ps1 -Accept or -Accept -Manual first)." >&2
           exit 1
         fi

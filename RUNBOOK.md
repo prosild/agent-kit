@@ -15,7 +15,7 @@
   - 검증 전후 미커밋·미추적 소스/skip-worktree 숨긴 변경·Git 오류·검사 중 HEAD/추적 파일 변경은 실패다(`sparse-checkout`의 정상 `S` 표시는 허용). Git direct/local 통합은 `--ff-only`, 추가 commit이 필요하면 검증·수락을 다시 한다.
 - 훅: `hooks/guard.mjs`(Claude `~/.claude/settings.json` PreToolUse `matcher: ".*"`, Codex `~/.codex/hooks.json`, Antigravity `~/.gemini/config/hooks.json`; `install.ps1`로 일괄 설치), `hooks/pre-push`(`init.ps1`이 `.git/hooks/pre-push`로 설치). 9절.
 - 스킬 원본: `<agent-kit>/skills/` (`install.ps1`로 일괄 등록). Claude(`~/.claude/skills/<이름>`)·Codex(`~/.agents/skills/<이름>`)는 정션(Windows `mklink /J`) 또는 심볼릭 링크(macOS·Linux `ln -sfn`)로 연결하고, Antigravity는 `~/.gemini/config/skills.json`의 `entries`에 `<agent-kit>/skills`를 네이티브로 등록한다. Windows 정션은 `cmd /c rmdir <정션 경로>`로만 지운다.
-- 회귀 테스트 6종: `node hooks/guard.test.mjs`, `node hooks/pre-push.test.mjs`, `node install.test.mjs`, `node verify.test.mjs`, `node cleanup.test.mjs`, `node update-tools.test.mjs`.
+- 회귀 테스트 일괄 실행: `node test.mjs` (개별 실행: `node hooks/guard.test.mjs`, `node hooks/pre-push.test.mjs`, `node install.test.mjs`, `node verify.test.mjs`, `node cleanup.test.mjs`, `node update-tools.test.mjs`).
 
 ## 2. hc 대기·읽기 (대화형 작업자·브라우저 조사 전용)
 - 단발성 무맥락 검토·읽기 조사는 비대화형(헤드리스 `-p` / `exec`)으로 실행하므로 `hc` 대기 루프를 쓰지 않는다.
@@ -84,7 +84,7 @@
 `check-tools.ps1`이 `tool-versions.txt`와 설치된 버전을 비교하고 훅 설정 무결성을 함께 점검한다. 사용자가 `"도구 업데이트 반영해"`라고 할 때만 아래 순서로 확인한다:
 1. 바뀐 도구의 변경 내역과 `agy --help`·`claude --help`·`codex --help`·`hc --help`(`hc --skill`)를 직접 확인한다(원칙 12).
 2. 키트가 쓰는 옵션·권한·훅 동작과 회귀 테스트 6종을 점검하고, 도구가 새로 네이티브 지원하는 기능으로 키트의 수동 우회를 덜어낼 수 있으면 사용자에게 제안한다(원칙 2).
-3. 끝나면 `check-tools.ps1 -Accept`(또는 배포판 기준이면 `tool-versions.txt` 갱신) 후 커밋한다.
+3. 끝나면 로컬 머신 기준만 갱신할 때는 `check-tools.ps1 -Accept`(Git 제외 파일 `tool-versions.local.txt` 기록)를 실행하고, 키트 배포판 기준 버전을 올릴 때는 `tool-versions.txt`를 수정해 커밋한다.
 
 ## 15. 작업별 맞춤 제약·검증과 반복 실패 시 수정
 - **불변 경계**: 전역 `agent-kit` 원본, `hooks/guard.mjs`, `hooks/pre-push`, 에이전트 권한/훅 설정은 작업 중 절대 수정하지 않는다.
