@@ -127,8 +127,11 @@ const cases = [
     writeFileSync(`${DIRECT}/handoff/T02/approved.json`, '{"version":1}\n');
     git([...id, 'commit', '-q', '--allow-empty', '-m', 'unaccepted T02'], DIRECT);
     const newTaskBlocked = blocked(push(['feat:main'], DIRECT));
+    // An abandoned task is closed with verify.ps1 -Cancel (the guard blocks agents from deleting approved.json by hand).
+    const cancel = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'verify.ps1'), '-Id', 'T02', '-Project', DIRECT, '-Cancel'], { encoding: 'utf8' });
+    const cancelledOk = cancel.status === 0 && /cancelled/.test(cancel.stdout) && push(['feat:main'], DIRECT).status === 0;
     rmSync(`${DIRECT}/handoff`, { recursive: true, force: true });
-    return manualOk && newTaskBlocked;
+    return manualOk && newTaskBlocked && cancelledOk;
   }],
   ['하위 폴더 저장소(-ProjectRoot): 상위 폴더의 handoff/approved.json도 direct pre-push가 검증', () => {
     const extProj = `${TMP}/ext-proj`;
@@ -239,7 +242,8 @@ const cases = [
     const specIgnored = git(['check-ignore', 'SPEC.md'], TSDIR).status === 0;
     const agentsIgnored = git(['check-ignore', 'AGENTS.md'], TSDIR).status === 0;
     const handoffIgnored = git(['check-ignore', 'handoff/T01.md'], TSDIR).status === 0;
-    return r.status === 0 && !specIgnored && !agentsIgnored && handoffIgnored && cfg('agentkit.trackSpec', TSDIR) === 'true';
+    const claudeIgnored = git(['check-ignore', 'CLAUDE.md'], TSDIR).status === 0;
+    return r.status === 0 && !specIgnored && !agentsIgnored && !claudeIgnored && handoffIgnored && cfg('agentkit.trackSpec', TSDIR) === 'true';
   }],
   ['새 빈 폴더에 -NoGit으로 전체 init 실행: Git 초기화 생략', () => {
     const NOGIT = `${TMP}/nogit-init`;

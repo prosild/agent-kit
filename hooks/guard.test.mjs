@@ -396,6 +396,11 @@ const cases = [
   ['ALLOW', '커밋 메시지에 verify.ps1 -Prepare 언급은 오탐 없음', bash('git commit -m "docs: verify.ps1 -Prepare 설명"'), '', 'worker-caller'],
   ['BLOCK', '작업자 세션: verify.ps1 -A (축약 플래그) 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -A'), '-Accept', 'worker-caller'],
   ['BLOCK', '작업자 세션: verify.ps1 -Pre (축약 플래그) 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -Pre'), '-Prepare', 'worker-caller'],
+  ['BLOCK', '작업자 세션: verify.ps1 -Prepar (목록에 없던 축약) 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -Prepar'), '-Prepare', 'worker-caller'],
+  ['BLOCK', '작업자 세션: verify.ps1 -Cancel 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -Cancel'), '-Cancel', 'worker-caller'],
+  ['BLOCK', '작업자 세션: verify.ps1 -Ca (축약 플래그) 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -Ca'), '-Cancel', 'worker-caller'],
+  ['ALLOW', '작업자 세션: verify.ps1 -Project 지정 일반 실행은 허용(-Prepare 축약으로 오인하지 않음)', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -Project C:/p -Repo C:/p/.worktrees/t01'), '', 'worker-caller'],
+  ['ALLOW', '설계자 세션: verify.ps1 -Cancel 허용', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -Cancel')],
   ['BLOCK', '작업자 세션: init.ps1 -S direct (축약 플래그) 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/init.ps1 -GitSetup -S direct'), '정책을 변경', 'worker-caller'],
   ['ALLOW', '검토 하위 세션: rg 검색 패턴 안의 |init.ps1 은 실행으로 오탐하지 않음', codex('Bash', 'rg -n "verify\\.ps1|init\\.ps1" C:/p'), '', 'sub-rev-caller'],
   ['BLOCK', '따옴표 감싼 cmd /c "git push --no-verify" 차단', ps('cmd /c "git push --no-verify origin feat"', R + '/repo-wt')],
@@ -421,6 +426,8 @@ const cases = [
   ['BLOCK', 'git -C .. push (상위 폴더 .. 보존 검사)', bash('git -C .. push', R + '/repo/sub')],
   ['BLOCK', 'Claude --bare 훅 우회 플래그 차단', bash('claude --bare "do it"')],
   ['BLOCK', 'Claude --safe-mode 훅 우회 플래그 차단', bash('claude --safe-mode "do it"')],
+  ['BLOCK', 'Claude --restricted(사용자 설정의 훅을 읽지 않는 모드) 차단', bash('claude --restricted -p "do it"')],
+  ['ALLOW', '커밋 메시지의 --restricted 언급은 오탐 없음', bash('git commit -m "docs: claude --restricted 차단 설명"')],
   ['BLOCK', 'Claude --setting-sources project(user 누락) 차단', bash('claude --setting-sources project "do it"')],
   ['ALLOW', 'Claude --setting-sources user,project 허용', bash('claude --setting-sources user,project "do it"')],
   ['BLOCK', '작업자 세션: --match-head-commit 없는 gh pr merge 차단', bash('gh pr merge 12 --squash'), '--match-head-commit', 'worker-caller'],
@@ -559,6 +566,9 @@ const agyLaunch = (stem) => bash(`hc run --bg --name ${stem} --cwd C:/p -- agy.e
   checkRate('헤드리스 검토: claude -p 에서 -review-4 까지는 허용', 'ALLOW', bash(`claude -p --permission-mode dontAsk -- "Read handoff/sub-p-t01-review-4.md and follow it."`), { rateFile: 'off' });
   checkRate('헤드리스 검토: 직행 agy -p 하위 세션에 --mode plan 누락 시 차단', 'BLOCK', bash(`agy.exe -p --sandbox "Read C:/p/handoff/sub-p-t01-review-1.md and follow it."`), { rateFile: 'off' }, '--mode plan으로 띄운다');
   checkRate('헤드리스 검토: 직행 agy -p --mode plan 하위 세션 허용', 'ALLOW', bash(`agy.exe -p --mode plan --sandbox "Read C:/p/handoff/sub-p-t01-review-1.md and follow it."`), { rateFile: 'off' });
+  checkRate('헤드리스 검토: 프롬프트를 -p 바로 뒤에 둔 형식(agy ... -p "<프롬프트>") 허용', 'ALLOW', bash(`agy.exe --model m --mode plan --sandbox --settings "C:/p/handoff/sub-p-t01-review-1/settings.json" -p "Read C:/p/handoff/sub-p-t01-review-1.md and follow it."`), { rateFile: 'off' });
+  checkRate('헤드리스 검토: 프롬프트를 -p 바로 뒤에 둔 형식도 --mode plan 누락 시 차단', 'BLOCK', bash(`agy.exe --model m --sandbox -p "Read C:/p/handoff/sub-p-t01-review-1.md and follow it."`), { rateFile: 'off' }, '--mode plan으로 띄운다');
+  checkRate('헤드리스 검토: 프롬프트를 -p 바로 뒤에 둔 형식도 5회차 검토는 차단', 'BLOCK', bash(`agy.exe --model m --mode plan --sandbox -p "Read C:/p/handoff/sub-p-t01-review-5.md and follow it."`), { rateFile: 'off' }, '상한');
   checkRate('역할 우선순위: 부모가 worker 터미널이어도 AGENTKIT_ROLE=sub-... 자식은 하위 세션으로 verify.ps1 차단', 'BLOCK', bash('powershell -File C:/kit/verify.ps1 -Id T01'), { callerId: 'worker-caller', roleEnvOverride: 'sub-demo-t01-review-1' }, '하위 세션(sub-demo-t01-review-1)');
   checkRate('역할 상승 방지: worker 터미널이 AGENTKIT_ROLE=designer를 줘도 -Accept는 계속 차단', 'BLOCK', bash('powershell -File C:/kit/verify.ps1 -Id T01 -Accept'), { callerId: 'worker-caller', roleEnvOverride: 'designer' }, '설계자 전용');
   checkRate('하위 세션 재귀 스폰 차단: sub-* 세션에서 다른 claude -p 실행 차단', 'BLOCK', bash(`claude -p "do work"`), { callerId: 'manual-sub' }, '다른 에이전트 CLI');

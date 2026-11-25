@@ -30,6 +30,11 @@
    - Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File <agent-kit>/install.ps1`
    - macOS·Linux: `pwsh -NoProfile -File <agent-kit>/install.ps1`
    - 이 한 줄로 **스킬 3종(`agent-kit-start`, `agent-delegate`, `agent-session-cleanup`) 글로벌 등록**(Claude·Codex 정션/심볼릭 링크, Antigravity 네이티브 `~/.gemini/config/skills.json`)과 **3사 에이전트 `PreToolUse` 실수 방지 훅(`guard.mjs`) 병합 등록**, 차단 자가 점검까지 자동으로 완료된다(연결 해제 시 `-Uninstall`).
+   - **설치하면 이 PC의 모든 에이전트 세션에 적용된다**(agent-kit으로 초기화하지 않은 프로젝트 포함):
+     - 제출 정책이 없는 저장소에서는 에이전트의 `main`/`master` push가 막힌다. 그 저장소에서 `init.ps1 -GitSetup -Target <저장소 루트> -Submission <direct|pr|local>`을 한 번 실행해 정책을 정한다.
+     - 에이전트 설정 파일(`.claude/settings*.json`, `.claude/`의 `hooks`·`agents`·`plugins`·`rules`·`commands`, `.mcp.json`, `.codex/`, `.gemini/`, `.agents/`와 홈 폴더의 같은 파일)은 agent-kit 폴더 세션이 아니면 에이전트가 고칠 수 없다. 사용자가 직접 고친다.
+     - 비밀 파일로 보이는 이름(`.env` 계열, `*.pem`·`*.key` 등 인증서·키, `.npmrc`, `credentials.json` 등)은 내용과 무관하게 에이전트 열람이 막힌다(공개 인증서, 토큰 없는 프로젝트 `.npmrc` 포함). 필요한 내용은 사용자가 대화에 붙여 준다.
+     - `~/.claude/settings.json`에 `cleanupPeriodDays`가 없으면 `36500`으로 넣어 Claude 대화 기록이 자동 삭제되지 않게 한다. `-Uninstall`은 이 값을 지우지 않으므로 필요하면 사용자가 직접 바꾼다.
 3. **내 기본 역할·모델 고정 (선택, `local-defaults.json`)**:
    - 새 프로젝트를 시작할 때마다 기본으로 채울 역할·모델 조합이 있으면 `<agent-kit>/local-defaults.json`(Git 제외 파일)에 실제 CLI 모델 ID를 적어 둔다:
      ```json
@@ -69,7 +74,7 @@
 | `RUNBOOK.md` | 도구 경로, hc·agy 요령, 확인된 제약, 에이전트 카탈로그, 반복 실패 시 하네스 수정(15절) | 막혔을 때 해당 절만 |
 | `install.ps1` | 최초 1회 글로벌 스킬 3종 등록 및 3사 `guard.mjs` 훅 병합 설치 (`-Uninstall` 지원) | 사용자 (최초 1회) |
 | `init.ps1`, `git-exclude.txt` | 템플릿 복사(경로 갱신 포함), Git 제외(`-TrackSpec` 선택 가능)와 `pre-push` 설치 | 설계자·작업자가 실행 |
-| `verify.ps1` | 인계 기준 고정(`-Prepare`), 검증 실행, 경량 수락(`-Accept` / `-Accept -Manual`), 제출 대조(`-CheckAccepted`) | 작업자·설계자가 실행 |
+| `verify.ps1` | 인계 기준 고정(`-Prepare`), 검증 실행, 경량 수락(`-Accept` / `-Accept -Manual`), 제출 대조(`-CheckAccepted`), 접은 작업 닫기(`-Cancel`) | 작업자·설계자가 실행 |
 | `check-tools.ps1`, `tool-versions.txt` | 에이전트 도구 버전 변경 및 훅 무결성 점검. 반영 절차는 RUNBOOK 14절 | `init.ps1`이 실행 |
 | `hooks/guard.mjs`, `hooks/pre-push` | 실수 방지 훅(비밀 파일, 보호 브랜치·미수락 push, 우회 플래그, 역할 경계, 폭주 방지) | 도구가 실행 |
 | `probes/` | 모델·도구 교체 및 지침 변경 전/후 행동 대조용 시험 재료와 결과 표 | 키트 유지보수 세션 |

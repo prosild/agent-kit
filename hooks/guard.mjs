@@ -14,8 +14,9 @@ const VIEWERS = /^(cat|type|head|tail|less|more|gc|get-content|select-string|sls
 const SECRET_DIR = /(^|[\\/])(\.codex[\\/]auth\.json|\.aws[\\/]credentials|\.docker[\\/]config\.json|\.kube[\\/]config|(gh|GitHub CLI)[\\/]hosts\.yml|\.ssh[\\/](?!known_hosts(?:\.old)?$|[^\\/]+\.pub$)[^\\/]+|\.cargo[\\/]credentials(?:\.toml)?|\.m2[\\/]settings\.xml)$/i;
 // Non-secret env templates, source/doc files, and committed non-local `.env.test` / `.env.ci` defaults.
 const SECRET_OK = /(\.env(\.[\w-]+)*\.(example|sample|template|defaults|dist|schema|md|ts|js|mjs|cjs)|(^|[\\/])\.env\.(test|ci))$/i;
-// Permission & hook-bypass flags across Claude, Codex, and Antigravity (including Claude's --bare / --safe-mode / user-less --setting-sources).
-const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|--bare\b|--safe-mode\b|--setting-sources(?:[ =]+)["']?(?![^"'\s]*\buser\b)[a-z,]+|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access/i;
+// Permission & hook-bypass flags across Claude, Codex, and Antigravity (including Claude's --bare / --safe-mode / --restricted /
+// user-less --setting-sources, which all skip the user settings file where this guard is registered).
+const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|--bare\b|--safe-mode\b|--restricted\b|--setting-sources(?:[ =]+)["']?(?![^"'\s]*\buser\b)[a-z,]+|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access/i;
 const READERS = /^(cat|type|head|tail|less|more|gc|get-content|import-csv|convertfrom-stringdata|select-string|sls|copy|copy-item|cp|scp|mv|move|move-item|ren|rename-item|curl|base64|grep|rg|findstr|awk|sed|diff|certutil|xxd|od|strings|sort|nl|tac|node|python|python3|py|powershell|pwsh)$/i;
 const MUTATORS = /^(rm|del|erase|rd|rmdir|remove-item|ri|mv|move|move-item|mi|ren|rename|rename-item|rni|new-item|ni|set-content|sc|add-content|ac|clear-content|clc|out-file|tee|tee-object|truncate|cp|copy|copy-item|cpi)$/i;
 
@@ -910,8 +911,10 @@ function main() {
         const subStem = agySub?.stem || caller.subStem;
         if (subStem) block(`하위 세션(${subStem})은 ${runsVerify ? 'verify.ps1' : 'init.ps1'}을 실행하지 않는다`);
         const isWorker = /[\\/]\.worktrees([\\/]|$)/i.test(cwd) || caller.isWorker;
-        if (isWorker && runsVerify && scriptTokens.some((tok) => /^-(Prepare|Prep|Pre|Pr|Accept|Accep|Acce|Acc|Ac|A)$/i.test(tok))) {
-          block('작업자 세션은 verify.ps1 -Prepare / -Accept를 실행하지 않는다(설계자 전용)');
+        // PowerShell accepts any unambiguous prefix of a switch name (-Pre…, -A…, -Ca…).
+        const psSwitch = (tok, full, min) => tok.startsWith('-') && tok.length - 1 >= min && full.startsWith(tok.slice(1).toLowerCase());
+        if (isWorker && runsVerify && scriptTokens.some((tok) => psSwitch(tok, 'prepare', 2) || psSwitch(tok, 'accept', 1) || psSwitch(tok, 'cancel', 2))) {
+          block('작업자 세션은 verify.ps1 -Prepare / -Accept / -Cancel을 실행하지 않는다(설계자 전용)');
         }
         if (isWorker && runsInit && scriptTokens.some((tok) => /^-(Submission|Subm\w*|Sub|Su|S|ProtectedBranches|Prot\w*|P|CrossAgentMode|Cross\w*|C|MaxVerifyFailures|Max\w*|M|Base|Bas|Ba|B|TrackSpec|Track\w*)$/i.test(tok))) {
           block('작업자 세션은 init.ps1로 저장소 제출·호출 정책을 변경하지 않는다');

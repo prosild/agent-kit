@@ -343,4 +343,33 @@ pushResult=spawnSync('git',['push','origin','HEAD:local-delivery'],{cwd:FLOW,enc
 check('통합: local은 원격 제출 차단',pushResult.status!==0 && /blocked/.test(pushResult.stderr),pushResult.stderr);
 pass('통합: local 브랜치 인계는 수락 유지',run('FLOW',{project:FLOW,mode:'CheckAccepted'}));
 
+// -TrackSpec fixture: designer-owned instruction files (tracked + edited mid-task, or still untracked) never make the tree
+// dirty, ordinary files still do; -Cancel closes an abandoned task without deleting its run history.
+const TS=join(TMP,'ts'); mkdirSync(join(TS,'handoff'),{recursive:true});
+git(['init','-q','-b','main'],TS);
+writeFileSync(join(TS,'.gitignore'),'handoff/\n'); writeFileSync(join(TS,'SESSION_HANDOFF.md'),'| ID |\n'); writeFileSync(join(TS,'app.txt'),'a\n');
+git(['add','-A'],TS); git(['commit','-q','-m','baseline'],TS);
+handoff('TS','echo ok','',TS); pass('TrackSpec: 기준 고정',prepare('TS',{project:TS}));
+git(['checkout','-q','-b','task/ts'],TS); writeFileSync(join(TS,'app.txt'),'b\n'); git(['commit','-q','-am','change'],TS);
+writeFileSync(join(TS,'SESSION_HANDOFF.md'),'| ID |\n| TS | doing |\n'); writeFileSync(join(TS,'SPEC.md'),'# spec\n');
+mkdirSync(join(TS,'agent-roles')); writeFileSync(join(TS,'agent-roles','WORKER.md'),'w\n');
+fail('TrackSpec 미설정: 설계자의 지침 파일 수정·미추적은 더티로 실패',run('TS',{project:TS}),'uncommitted');
+git(['config','agentkit.trackSpec','true'],TS);
+r=run('TS',{project:TS}); pass('TrackSpec: 설계자 소유 지침 파일의 미커밋 변경은 더티 검사에서 제외',r);
+check('TrackSpec: 제외한 지침 파일 수를 SPEC-PENDING으로 알림',/^3 /.test(r.field('SPEC-PENDING')||''),r.out);
+writeFileSync(join(TS,'SESSION_HANDOFF.md'),'| ID |\n| TS | review |\n');
+pass('TrackSpec: 현황 표를 review로 고친 뒤에도 경량 수락',run('TS',{project:TS,mode:'Accept'}));
+r=run('TS',{project:TS,mode:'Accept'});
+check('같은 수락 재호출은 차단하되 사유가 already accepted로 시작(worker PASS 부재로 읽히지 않음)',r.code===1 && /^FAIL already accepted/.test(r.field('RESULT')||''),r.out);
+pass('TrackSpec: 제출 직전 대조',run('TS',{project:TS,mode:'CheckAccepted'}));
+writeFileSync(join(TS,'stray.txt'),'x');
+fail('TrackSpec이어도 일반 미추적 파일은 제출 대조 실패',run('TS',{project:TS,mode:'CheckAccepted'}),'not clean'); rmSync(join(TS,'stray.txt'));
+handoff('GONE','echo ok','',TS); pass('취소할 작업 기준 고정',prepare('GONE',{project:TS}));
+r=run('GONE',{project:TS,mode:'Cancel'}); pass('-Cancel: 승인을 닫음',r);
+check('-Cancel: approved.json만 지우고 approvals 이력은 보존',!existsSync(join(TS,'handoff/GONE/approved.json')) && existsSync(join(TS,'handoff/GONE/approvals')),r.out);
+fail('-Cancel 뒤 작업자 검증은 재승인 전까지 실패',run('GONE',{project:TS}),'snapshot missing');
+r=run('GONE',{project:TS,mode:'Cancel'}); check('-Cancel 재실행은 nothing to cancel',r.code===0 && /nothing to cancel/.test(r.out),r.out);
+r=run('TS',{project:TS,mode:'Cancel'}); check('-Cancel: 수락된 작업도 승인·수락을 함께 닫음',r.code===0 && !existsSync(join(TS,'handoff/TS/accepted.json')),r.out);
+check('-Cancel과 다른 모드 동시 지정은 code2',spawnSync(PWSH,[...PWSH_BASE,'-File',VERIFY,'-Id','TS','-Project',TS,'-Cancel','-Accept'],{encoding:'utf8'}).status===2);
+
 console.log(bad ? bad+' FAIL / '+total : 'ALL PASS ('+total+')'); process.exit(bad?1:0);

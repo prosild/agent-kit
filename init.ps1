@@ -6,8 +6,9 @@
 # if that fails, it stops with exit 1 before copying anything (see Initialize-Repo).
 # If the folder is a Git repository root, also sets up local Git safeguards:
 #   - GIT-EXCLUDE: adds the agent-kit block (git-exclude.txt) to <git common dir>/info/exclude.
-#                  Pass -TrackSpec to keep AGENTS.md, SPEC.md, SESSION_HANDOFF.md and agent-roles/ tracked in Git
-#                  for team/multi-machine sharing while excluding only runtime handoff/worktree artifacts.
+#                  Pass -TrackSpec to keep AGENTS.md, CLAUDE.md, SPEC.md, SESSION_HANDOFF.md and agent-roles/ tracked in Git
+#                  for team/multi-machine sharing while excluding only runtime handoff/worktree artifacts
+#                  (verify.ps1 ignores their pending edits in its clean-tree check; see RUNBOOK section 1).
 #   - POLICY: the submission policy in local Git config, read by hooks/pre-push and hooks/guard.mjs:
 #       agentkit.submission         pr | direct | local
 #       agentkit.protectedBranches  CSV of branches nobody pushes to directly
@@ -195,7 +196,7 @@ function Add-GitExclude($repo, [bool]$trackSpecMode) {
     $ex = Join-Path $info 'exclude'
     $rawBlock = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'git-exclude.txt')).Replace("`r`n", "`n")
     $block = if ($trackSpecMode) {
-        $lines = $rawBlock -split "`n" | Where-Object { $_ -notin @('/AGENTS.md', '/SPEC.md', '/SESSION_HANDOFF.md', '/agent-roles/') }
+        $lines = $rawBlock -split "`n" | Where-Object { $_ -notin @('/AGENTS.md', '/CLAUDE.md', '/SPEC.md', '/SESSION_HANDOFF.md', '/agent-roles/') }
         ($lines -join "`n")
     } else { $rawBlock }
     $cur = if (Test-Path -LiteralPath $ex) { [IO.File]::ReadAllText($ex) } else { '' }

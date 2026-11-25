@@ -4,7 +4,7 @@
 - 인계 파일(`handoff/<ID>.md`)의 목표·인수 조건·가정(기본값)·하지 않을 것·`review`·`verify`와 가리키는 `SPEC.md` 절을 읽는다. 인계 범위 밖 파일 수정이나 불필요한 리팩터링은 하지 않는다.
 - `deps`가 있으면 `SESSION_HANDOFF.md`에서 선행 작업이 `done`이고 제출 commit이 base에 포함되어 있는지(`git merge-base --is-ancestor <선행 commit> <base>`) 확인한다.
 - 재개: 이미 `handoff/<ID>-report.md`나 작업 브랜치가 있으면 이전 상태부터 잇는다. 이미 설계자 수락(`accepted …`)을 받은 상태면 기본 `verify.ps1`을 다시 돌리지 말고(기본 실행은 수락을 지운다) 9단계(`-CheckAccepted`)부터 진행한다.
-- 저장소에 제출 정책(`git config --local agentkit.submission`)이 비어 있으면 `init.ps1 -GitSetup -Target <저장소 루트>`를 한 번 실행해보고, 정책 미설정이면 스스로 정하지 말고 설계자에게 보고한다. 로컬 제외된 지침 파일과 `handoff/`는 `git add`하지 않는다.
+- 저장소에 제출 정책(`git config --local agentkit.submission`)이 비어 있으면 `init.ps1 -GitSetup -Target <저장소 루트>`를 한 번 실행해보고, 정책 미설정이면 스스로 정하지 말고 설계자에게 보고한다. 지침 파일(`AGENTS.md`·`SPEC.md`·`SESSION_HANDOFF.md`·`agent-roles/`)과 `handoff/`는 인계가 지시하지 않는 한 `git add`하지 않는다.
 - 인계가 모호하거나 그대로 구현하면 안 되는 결함을 찾으면 추측하지 말고 `handoff/<ID>-report.md`에 질문을 적고 턴을 끝낸다.
 
 ## 수행 순서 (해당하는 단계만)

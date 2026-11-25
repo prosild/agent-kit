@@ -10,7 +10,7 @@
 - 빠진 것이 없는지 6가지 관점으로 훑는다: ① 범위 ② 사용자 흐름 ③ 데이터·외부 계약(원문·버전·실패 동작) ④ 실패와 예외 ⑤ 제약 ⑥ 완료 판정 방법과 검증 환경(실제 대상 vs 모의 환경).
 - **착수 전 고정 확인 블록**: 작업을 맡기기 전에 반드시 아래 4가지를 한눈에 보이게 제시해 사용자 합의를 받는다(작은 작업은 첫 응답 한 번에 묶어 제시해 개입 2회 안에 끝낸다; 임의 가정 금지):
   1. **목표와 완료 기준** (무엇을 확인하면 끝나는지)
-  2. **제출·추적 방식 추천과 이유** (`local` / `direct` / `pr`, 필요 시 `-TrackSpec` 스펙 Git 공유 여부)
+  2. **제출·추적 방식 추천과 이유** (`local` / `direct` / `pr`, 필요 시 `-TrackSpec` 스펙 Git 공유 여부와 그때 지침 파일을 누가 언제 커밋할지)
   3. **실패·빈 값·잘못된 입력의 추천 기본값** (예외 입력 시 반환값·오류 처리 정책 명시)
   4. **프로젝트 무게** (`가벼움` / `무거움` — 새 프로젝트 첫 착수 시)
 
@@ -30,7 +30,7 @@
 
 ## 4. 위임과 수락
 - 구현·검증·Git·배포는 작업자에게 맡긴다(맡기는 비용이 더 큰 사소한 문구 수정만 직접 수행).
-- 위임 전 Git 작업은 `verify.ps1 -Id <ID> -Prepare`로 인계·기준 커밋을 고정하고, `<agent-kit>/skills/agent-delegate/worker.md` 절차로 작업자를 실행한다. `SESSION_HANDOFF.md` 현황 표는 설계자만 갱신한다(`doing` → `review`/`blocked`/`failed` → `done`).
+- 위임 전 Git 작업은 `verify.ps1 -Id <ID> -Prepare`로 인계·기준 커밋을 고정하고, `<agent-kit>/skills/agent-delegate/worker.md` 절차로 작업자를 실행한다. `SESSION_HANDOFF.md` 현황 표는 설계자만 갱신한다(`doing` → `review`/`blocked`/`failed` → `done`). 사용자가 작업을 접기로 하면 `verify.ps1 -Id <ID> -Cancel`로 승인을 닫고 `failed`로 둔다.
 - 작업자가 원인이 같은 실패를 2회 연속 겪거나 `max verify failures`에 도달하면 무작정 재시도시키지 말고 `<agent-kit>/RUNBOOK.md` 15절에 따라 인계·검증 결함부터 점검한다.
 - **수락 전 확인** (`normal` 작업은 설계자가 유일한 코드 검토자다):
   - 작업자 보고 요약만 보지 않고 `OUT` 폴더의 `diff.patch`·`test-changes.txt`·`changed.txt`·`summary.txt`와 `SPEC-CHANGED`·`EVIDENCE` 신호를 직접 대조해 **인수 조건 미충족·테스트 삭제/약화·범위 밖 수정**이 없는지 확인한다(`critical`은 독립 검토 보고의 `판정: 진행 가능 | 높음 0`까지 확인).

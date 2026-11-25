@@ -5,16 +5,18 @@
 #   designer acceptance against the latest valid worker PASS on the same commit & approval without re-running slow tests
 #   by default (-Rerun forces re-execution; -Manual records acceptance for a `verify: -` Git task after manual inspection).
 # -CheckAccepted: compare the current tip/criteria/clean tree immediately before submission.
+# -Cancel: designer closes an abandoned/failed task (removes the live approval and acceptance, keeps run history) so it no
+#   longer counts as an open task for hooks/pre-push in direct mode. A later -Prepare reopens it.
 param(
     [Parameter(Mandatory = $true)][string]$Id,
     [string]$Project = (Get-Location).Path, [string]$Repo = '', [string]$Base = '',
-    [switch]$Prepare, [switch]$Accept, [switch]$CheckAccepted, [switch]$Rerun, [switch]$Manual,
+    [switch]$Prepare, [switch]$Accept, [switch]$CheckAccepted, [switch]$Cancel, [switch]$Rerun, [switch]$Manual,
     [string]$ReviewedCommit = '', [string]$ReviewReport = ''
 )
 $ErrorActionPreference = 'Stop'
 function Usage([string]$message) { Write-Output "ERROR $message"; exit 2 }
 if ($Id -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]*$') { Usage "bad id (use letters, digits, '-', '_'; '.' is rejected by hc --name): $Id" }
-if ((@($Prepare, $Accept, $CheckAccepted) | Where-Object { $_ }).Count -gt 1) { Usage 'choose only one mode' }
+if ((@($Prepare, $Accept, $CheckAccepted, $Cancel) | Where-Object { $_ }).Count -gt 1) { Usage 'choose only one mode' }
 if ($ReviewedCommit -and -not $Accept) { Usage '-ReviewedCommit is for -Accept only' }
 if ($ReviewReport -and -not $Accept) { Usage '-ReviewReport is for -Accept only' }
 if ($Rerun -and -not $Accept) { Usage '-Rerun is for -Accept only' }
@@ -34,11 +36,20 @@ if ($Prepare) {
     }
 } elseif (-not (Test-Path -LiteralPath $Repo -PathType Container)) { Usage "repo not found: $Repo" }
 $handoff = Join-Path (Join-Path $Project 'handoff') "$Id.md"
-if (-not (Test-Path -LiteralPath $handoff -PathType Leaf)) { Usage "handoff file not found: $handoff" }
 $task = Join-Path (Join-Path $Project 'handoff') $Id
 $latest = Join-Path $task 'verify'
 $approvedPath = Join-Path $task 'approved.json'
 $acceptedPath = Join-Path $task 'accepted.json'
+if ($Cancel) {
+    $removed = @()
+    foreach ($p in @($approvedPath, $acceptedPath)) {
+        if (Test-Path -LiteralPath $p -PathType Leaf) { Remove-Item -LiteralPath $p -Force; $removed += (Split-Path -Leaf $p) }
+    }
+    if ($removed.Count) { Write-Output "RESULT: PASS (cancelled; removed $($removed -join ', '), run history kept)" }
+    else { Write-Output 'RESULT: PASS (nothing to cancel)' }
+    exit 0
+}
+if (-not (Test-Path -LiteralPath $handoff -PathType Leaf)) { Usage "handoff file not found: $handoff" }
 $utf8 = [Text.UTF8Encoding]::new($false)
 try {
     [Console]::InputEncoding = $utf8
@@ -80,13 +91,28 @@ function Read-Git([string[]]$GitArgs, [switch]$Probe) {
     if (-not $Probe) { $gitErrors.Add("git failed: $($GitArgs -join ' ')") }
 }
 function Head { return ((Read-Git @('rev-parse', '--verify', 'HEAD')) -join '').Trim() }
+# -TrackSpec keeps the designer-owned instruction files tracked at the project root. The designer edits them while a task
+# runs (status table, decisions), so their pending changes are not part of the verified change and never make the tree dirty.
+# Applies only when the repository root is the project folder itself (a worktree has its own committed copies).
+$specOwnedPat = '^"?(AGENTS\.md|CLAUDE\.md|SPEC\.md|SESSION_HANDOFF\.md|agent-roles/[^"]*)"?$'
+$script:specExempt = $null
 function State {
+    if ($null -eq $script:specExempt) {
+        $trackSpec = (((Read-Git @('config', '--local', '--get', 'agentkit.trackSpec') -Probe) -join '').Trim() -eq 'true')
+        $script:specExempt = ($trackSpec -and (Test-SamePath $Repo $Project))
+    }
     $tracked = @(Read-Git @('status', '--short', '--untracked-files=no'))
     $untracked = @(Read-Git @('ls-files', '--others', '--exclude-standard'))
+    $specPending = @()
+    if ($script:specExempt) {
+        $specPending = @($tracked | Where-Object { $_.Length -gt 3 -and $_.Substring(3) -cmatch $specOwnedPat }) + @($untracked | Where-Object { $_ -cmatch $specOwnedPat })
+        $tracked = @($tracked | Where-Object { -not ($_.Length -gt 3 -and $_.Substring(3) -cmatch $specOwnedPat) })
+        $untracked = @($untracked | Where-Object { $_ -cnotmatch $specOwnedPat })
+    }
     $isSparse = (((Read-Git @('config', '--bool', '--get', 'core.sparseCheckout') -Probe) -join '').Trim() -eq 'true')
     $hiddenPat = if ($isSparse) { '^[a-z] ' } else { '^(S|[a-z]) ' }
     $hidden = @(Read-Git @('ls-files', '-v') | Where-Object { $_ -cmatch $hiddenPat })
-    return [pscustomobject]@{ tracked=$tracked; untracked=$untracked; hidden=$hidden; dirty=($tracked.Count -or $untracked.Count -or $hidden.Count) }
+    return [pscustomobject]@{ tracked=$tracked; untracked=$untracked; hidden=$hidden; specPending=$specPending; dirty=($tracked.Count -or $untracked.Count -or $hidden.Count) }
 }
 function Handoff-Hash { return Compute-NormalizedHash $handoff }
 $specPath = Join-Path $Project 'SPEC.md'
@@ -356,7 +382,7 @@ if ($Accept) {
     if ($existingAccepted -and $existingAccepted.approval -eq $approved.approval -and $existingAccepted.commit -eq $head -and (Test-SamePath ([string]$existingAccepted.workerRun) ([string]$workerRun.run)) -and -not $Rerun) {
         $sameRep = (-not $ReviewReport -and -not $existingAccepted.reviewReport) -or ($ReviewReport -and $existingAccepted.reviewReport -and (Test-SamePath ([string]$existingAccepted.reviewReport) ([string]$reviewInfo.path)))
         if ($sameRep) {
-            Fail 'acceptance requires a prior worker PASS on this commit and approval (already accepted; existing acceptance preserved — pass -Rerun to re-verify)'
+            Fail 'already accepted for this commit, approval and review report; existing acceptance preserved (confirm with -CheckAccepted, or pass -Rerun to re-verify)'
         }
     }
 
@@ -511,6 +537,9 @@ $summary = @(
     "DIFF-LINES: $($diff.Count)$(if (-not $diff.Count) { '   WARN empty diff' })$(if ($mergeCommits.Count) { "   WARN $($mergeCommits.Count) merge commit(s) in range" })",
     "TEST-CHANGES: $($signals.Count)$(if ($signals.Count) { ' signal(s); inspect test-changes.txt and diff before accepting' })$(if ($addedTests.Count) { " (added tests: $($addedTests.Count))" })"
 )
+if ($after.specPending.Count) {
+    $summary += "SPEC-PENDING: $($after.specPending.Count) instruction file change(s) not committed (-TrackSpec: ignored by the clean-tree check; commit them as agreed in SPEC.md)"
+}
 if ($evidenceList.Count) {
     $summary += "EVIDENCE: $($evidenceList.Count) file(s)$(if ($staleEvidence.Count) { "; WARN $($staleEvidence.Count) file(s) older than HEAD commit ($($staleEvidence -join ', '))" } else { ' (all current)' })"
 }
