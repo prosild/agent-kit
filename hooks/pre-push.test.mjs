@@ -63,7 +63,7 @@ const cases = [
     const o = init('-Target', F);
     return /GIT: baseline commit created \(main; the repository had no commits\)/.test(o) && /CREATED: (?!-)/.test(o) && /GIT-EXCLUDE: added/.test(o)
       && /PRE-PUSH: skipped \(no agentkit\.submission/.test(o) && !existsSync(hookOf(F)) && !cfg('agentkit.submission', F)
-      && existsSync(`${F}/AGENTS.md`) && !existsSync(`${F}/CLAUDE.md`) && !existsSync(`${F}/GEMINI.md`)
+      && existsSync(`${F}/AGENTS.md`) && (!existsSync(`${F}/CLAUDE.md`) || /AGENTS-LOAD: created CLAUDE\.md/.test(o)) && !existsSync(`${F}/GEMINI.md`)
       && git(['rev-parse', '--verify', 'HEAD'], F).status === 0 && git(['ls-tree', 'HEAD'], F).stdout.trim() === ''
       && author(F) === 'agent-kit <agent-kit@local>';
   }],
@@ -244,6 +244,19 @@ const cases = [
     const handoffIgnored = git(['check-ignore', 'handoff/T01.md'], TSDIR).status === 0;
     const claudeIgnored = git(['check-ignore', 'CLAUDE.md'], TSDIR).status === 0;
     return r.status === 0 && !specIgnored && !agentsIgnored && !claudeIgnored && handoffIgnored && cfg('agentkit.trackSpec', TSDIR) === 'true';
+  }],
+  ['상위 폴더에 CLAUDE.md가 있으면 @AGENTS.md를 가져오는 CLAUDE.md를 만들고, 가져오기 줄이 없는 기존 CLAUDE.md는 경고만 한다', () => {
+    const PARENT = `${TMP}/claude-parent`;
+    mkdirSync(`${PARENT}/proj-a`, { recursive: true }); mkdirSync(`${PARENT}/proj-b`, { recursive: true });
+    writeFileSync(`${PARENT}/CLAUDE.md`, '# parent rules\n');
+    writeFileSync(`${PARENT}/proj-b/CLAUDE.md`, '# my own rules\n');
+    const a = init('-Target', `${PARENT}/proj-a`, '-NoGit');
+    const b = init('-Target', `${PARENT}/proj-b`, '-NoGit');
+    const madeA = /AGENTS-LOAD: created CLAUDE\.md/.test(a) && /^@AGENTS\.md\s*$/m.test(readFileSync(`${PARENT}/proj-a/CLAUDE.md`, 'utf8'));
+    const keptB = /AGENTS-LOAD: WARN/.test(b) && readFileSync(`${PARENT}/proj-b/CLAUDE.md`, 'utf8') === '# my own rules\n';
+    writeFileSync(`${PARENT}/proj-b/CLAUDE.md`, '@AGENTS.md\n# my own rules\n');
+    const quietB = !/AGENTS-LOAD:/.test(init('-Target', `${PARENT}/proj-b`, '-NoGit'));
+    return madeA && keptB && quietB;
   }],
   ['새 빈 폴더에 -NoGit으로 전체 init 실행: Git 초기화 생략', () => {
     const NOGIT = `${TMP}/nogit-init`;

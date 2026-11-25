@@ -1,0 +1,11 @@
+# T01 작업 보고
+- 상태: review
+- 커밋: `3333333333333333333333333333333333333333`
+- verify: RESULT PASS · OUT `verify-run` · TEST-CHANGES 0(추가한 테스트 파일 1) · EVIDENCE 1(최신)
+- 인수 조건:
+  - [x] 일반 사용자 `/admin/users` 403: `test/admin-guard.test.js`의 `blocks viewer on /admin/users with 403` (모의 환경, `verify-run/output.txt`)
+  - [x] 비로그인 401 유지: `rejects anonymous request with 401`
+  - [x] 보안 스캔: 커밋 뒤 다시 실행, 미해결 취약점 0건 (`handoff/T01/evidence/scan-summary.txt`)
+- 구현하며 정한 것: 없음
+- 남긴 위험: 없음(스캔 0건, 끈 검사 없음, 실행하지 못한 시험 없음)
+- 설계자 결정 필요: 없음

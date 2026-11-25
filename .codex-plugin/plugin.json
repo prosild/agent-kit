@@ -1,0 +1,13 @@
+{
+  "name": "agent-kit",
+  "version": "0.1.0",
+  "description": "Multi-agent work harness: designer, context-free reviewer and worker roles, with three skills and a mistake guard hook.",
+  "repository": "https://github.com/prosild/agent-kit",
+  "skills": "./skills/",
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "agent-kit",
+    "shortDescription": "Designer, context-free reviewer and worker roles",
+    "category": "Productivity"
+  }
+}

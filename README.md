@@ -1,6 +1,6 @@
 # agent-kit
 
-똑똑한 **설계자(Designer)** 하나가 사용자와 대화하며 프로젝트를 설계하고, 대화 맥락을 모르는 **독립 검토자(Reviewer)** 세션이 그 설계의 빈틈을 찾으며, 구현과 검증은 **작업자(Worker)**가 맡는 멀티 에이전트 작업 하네스(지침·스크립트·훅 묶음)다.
+똑똑한 **설계자(Designer)** 하나가 사용자와 대화하며 프로젝트를 설계하고, 대화 맥락을 모르는 **독립 검토자(Reviewer)** 세션이 그 설계의 빈틈을 찾으며, 큰 구현과 검증은 **작업자(Worker)**가 맡는 멀티 에이전트 작업 하네스(지침·스크립트·훅 묶음)다.
 
 실제 프로젝트에서 겪은 실패와 시행착오를 바탕으로 정립한 목적과 13가지 원칙(`PRINCIPLES.md`)을 중심으로 동작하며, 규칙을 더하거나 뺄 때는 언제나 그 문서를 기준으로 삼는다(설계 배경과 7대 핵심 철학 해설은 [DESIGN_PHILOSOPHY.md](./DESIGN_PHILOSOPHY.md) 참고).
 
@@ -9,14 +9,14 @@
 ![agent-kit 워크플로](./assets/workflow.svg)
 
 1. **만든 쪽과 확인하는 쪽의 철저한 분리 (`DESIGNER` / `REVIEWER` / `WORKER`)**
-   - **설계자**: 코드를 직접 쓰지 않고 사용자와 대화하며 목표·완료 기준·하지 않을 것·결정 이유를 `SPEC.md`와 작업별 인계 파일(`handoff/<ID>.md`)로 만든다.
+   - **설계자**: 사용자와 대화하며 목표·완료 기준·하지 않을 것·결정 이유를 `SPEC.md`와 작업별 인계 파일(`handoff/<ID>.md`)로 만든다. 작은 일반 작업은 직접 구현하되 맥락 없는 검토를 통과해야 수락되고, 큰 작업·위험한 작업·병렬 작업은 작업자에게 맡긴다.
    - **맥락 없는 독립 검토자**: 설계자와의 대화 맥락을 전혀 물려받지 않는 별도 헤드리스 세션에서 오직 문서와 코드만 읽고 빈틈·모순·과잉 설계를 찾는다.
    - **작업자**: 인계 하나당 세션 하나로 격리되어 구현·테스트·고정 검증(`verify.ps1`)·Git 제출만 수행한다.
-   - **이종 에이전트 교차 배치**: Codex·Claude Code·Antigravity 중 원하는 도구를 역할별로 자유롭게 조합하며, `AGENTS.md` 표 한 곳만 고치면 역할을 즉시 교체할 수 있다(3사 모두 `AGENTS.md`를 네이티브로 자동 로드하며, 기존 프로젝트 고유 `CLAUDE.md`가 따로 있을 때만 `@AGENTS.md` 한 줄을 둔다).
+   - **이종 에이전트 교차 배치**: Codex·Claude Code·Antigravity 중 원하는 도구를 역할별로 자유롭게 조합하며, `AGENTS.md` 표 한 곳만 고치면 역할을 즉시 교체할 수 있다(3사 모두 `AGENTS.md`를 자동 로드한다. Claude는 프로젝트 폴더나 그 상위에 `CLAUDE.md` 계열 파일이 있으면 `AGENTS.md`를 읽지 않으므로, 그때는 `init.ps1`이 `@AGENTS.md`를 가져오는 `CLAUDE.md`를 만들어 준다).
 2. **말이 아닌 실행 근거로 잠그는 경량 결정론적 검증 (`verify.ps1` + `hooks/pre-push`)**
    - 설계자가 착수 전 `verify.ps1 -Prepare`로 인계 해시·`SPEC.md` 해시·비교 기준 커밋을 고정한다.
    - 빌드 캐시 재생(Gradle `UP-TO-DATE`/`SKIPPED`, Go `(cached)`/`[no test files]`, Turborepo/Nx 캐시), 테스트 0건 실행, 미추적 파일·더티 트리를 모두 실패로 잡아내며, 기존 테스트 삭제·skip·단언 약화 신호(`test-changes.txt`)와 명령 실패 시 줄 번호가 붙은 핵심 에러 발췌(`FAILURE-EXCERPT`)를 자동 추출한다.
-   - 설계자의 `verify.ps1 -Accept`는 무거운 테스트를 중복 재실행하지 않고 작업자가 남긴 실행 증거(`run.json`)·인계 해시·클린 트리를 즉시 대조해 로컬 수락 기록(`accepted.json`)을 남기며(`critical`은 검토 보고서의 판정·`검토 commit`·`검증 경로`(`OUT`) 일치까지 필수 검증, 수동 검증 Git 작업은 `-Accept -Manual`), 커밋 해시가 일치하지 않으면 `pre-push` 훅과 `-CheckAccepted`가 제출을 차단한다.
+   - 설계자의 `verify.ps1 -Accept`는 무거운 테스트를 중복 재실행하지 않고 작업자가 남긴 실행 증거(`run.json`)·인계 해시·클린 트리를 즉시 대조해 로컬 수락 기록(`accepted.json`)을 남기며(`critical` 작업과 설계자가 직접 구현한 작업은 검토 보고서의 판정·`검토 commit`·`검증 경로`(`OUT`) 일치까지 필수 검증, 수동 검증 Git 작업은 `-Accept -Manual`), 커밋 해시가 일치하지 않으면 `pre-push` 훅과 `-CheckAccepted`가 제출을 차단한다.
 3. **3사 에이전트 공통 실수 방지 가드레일 (`hooks/guard.mjs`)**
    - Claude Code·Codex·Antigravity 공통 `PreToolUse` 훅으로 비밀 파일(`.env`, SSH 키·인증서, 클라우드 자격증명, 테스트 쿠키) 열람, 보호 브랜치 직접 push 및 `--no-verify` 우회, 훅·권한 우회 플래그, 하위 세션·작업자의 역할 경계 이탈, 호출 폭주·무한 루프를 실시간 차단한다.
    - 상위 AI가 하위 터미널 화면을 읽어 승인 키를 대신 누르는 위험한 대리 클릭 대신, 단발성 검토·조사는 헤드리스 모드로 실행하고 작업자의 통상 로컬 명령은 세션 시작 시 선언적 권한 설정으로 허용한다.
@@ -26,15 +26,25 @@
 ## 요구 환경 및 초기 설정 (최초 1회)
 - **요구 환경**: Windows (Windows PowerShell 5.1+ 또는 `pwsh`), macOS·Linux (`pwsh` PowerShell 7+, `/bin/sh`), Git, Node.js 18+, 사용할 에이전트 CLI(Codex / Claude Code / Antigravity 중 1개 이상), 선택 사항으로 대화형 작업자 세션 오케스트레이션용 **Herdr(`hc`)**.
 1. 저장소를 **공백이나 셸 특수문자(`& ; | < > ( ) ' " [ ]`)가 없는 중앙 경로 한 곳**(`<agent-kit>`, 예: `C:/Users/<user>/agent-kit` 또는 `~/agent-kit`)에 클론한다(작업할 개별 프로젝트 폴더 안에 클론하지 않는다).
-2. **원클릭 자동 설정 (`install.ps1`, 권장)**:
-   - Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File <agent-kit>/install.ps1`
-   - macOS·Linux: `pwsh -NoProfile -File <agent-kit>/install.ps1`
-   - 이 한 줄로 **스킬 3종(`agent-kit-start`, `agent-delegate`, `agent-session-cleanup`) 글로벌 등록**(Claude·Codex 정션/심볼릭 링크, Antigravity 네이티브 `~/.gemini/config/skills.json`)과 **3사 에이전트 `PreToolUse` 실수 방지 훅(`guard.mjs`) 병합 등록**, 차단 자가 점검까지 자동으로 완료된다(연결 해제 시 `-Uninstall`).
-   - **설치하면 이 PC의 모든 에이전트 세션에 적용된다**(agent-kit으로 초기화하지 않은 프로젝트 포함):
-     - 제출 정책이 없는 저장소에서는 에이전트의 `main`/`master` push가 막힌다. 그 저장소에서 `init.ps1 -GitSetup -Target <저장소 루트> -Submission <direct|pr|local>`을 한 번 실행해 정책을 정한다.
+2. **등록**: 스킬 3종(`agent-kit-start`, `agent-delegate`, `agent-session-cleanup`)과 실수 방지 훅(`guard.mjs`)을 쓰는 도구에 등록한다. 한 도구에는 아래 방법 중 하나만 쓴다(둘 다 쓰면 가드가 호출마다 두 번 돈다).
+   - **Claude Code — 플러그인(권장)**:
+     ```
+     claude plugin marketplace add <agent-kit>
+     claude plugin install agent-kit@agent-kit
+     ```
+     로컬 경로 마켓플레이스는 복사 없이 `<agent-kit>` 폴더를 그대로 읽으므로 `git pull`만 하면 최신이 된다. 스킬 이름에는 `agent-kit:agent-delegate`처럼 플러그인 이름이 붙는다. 해제는 `claude plugin uninstall agent-kit`. 열려 있던 세션은 다시 시작해야 플러그인 훅이 걸린다.
+   - **Codex · Antigravity — `install.ps1 -Tools codex,agy`**(훅 동작을 확인한 경로):
+     - Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File <agent-kit>/install.ps1 -Tools codex,agy`
+     - macOS·Linux: `pwsh -NoProfile -File <agent-kit>/install.ps1 -Tools codex,agy`
+     - 스킬은 정션/심볼릭 링크(Codex `~/.agents/skills`)와 Antigravity `~/.gemini/config/skills.json`으로, 훅은 전역 `hooks.json`에 등록한다. `<agent-kit>`을 그대로 가리키므로 `git pull`만 하면 최신이다. 해제는 같은 명령에 `-Uninstall`.
+     - Codex는 새로 생겼거나 바뀐 훅을 사용자가 `/hooks`에서 신뢰해야 실행한다. 설치 뒤 Codex에서 `/hooks`를 한 번 확인한다.
+   - `-Tools`를 빼면 세 도구를 모두 `install.ps1`로 등록한다(Claude도 정션과 `~/.claude/settings.json` 훅으로 등록).
+   - **Codex · Antigravity 플러그인(훅 실행 미확인, 2026-11-26)**: 매니페스트(`.codex-plugin/`, `.agents/plugins/marketplace.json`, `.antigravity-plugin/`, 루트 `hooks.json`)가 들어 있어 `codex plugin marketplace add <agent-kit>` 뒤 `codex plugin add agent-kit@agent-kit`, `agy plugin install <agent-kit>`으로 설치는 된다. 두 도구는 플러그인을 캐시 폴더로 복사하므로 키트를 갱신할 때마다 다시 설치해야 하고, 복사본의 훅이 실제로 차단하는지는 아직 확인하지 못했다.
+   - **어느 방법이든 등록하면 이 PC의 모든 에이전트 세션에 적용된다**(agent-kit으로 초기화하지 않은 프로젝트 포함):
+     - push 규칙은 키트로 설정한 저장소에만 적용된다(`agentkit.*` 설정이 하나도 없는 저장소의 push는 막지 않는다). 키트로 초기화했지만 제출 방식을 아직 정하지 않은 저장소에서는 에이전트의 `main`/`master` push가 막히므로 `init.ps1 -GitSetup -Target <저장소 루트> -Submission <direct|pr|local>`로 정한다.
      - 에이전트 설정 파일(`.claude/settings*.json`, `.claude/`의 `hooks`·`agents`·`plugins`·`rules`·`commands`, `.mcp.json`, `.codex/`, `.gemini/`, `.agents/`와 홈 폴더의 같은 파일)은 agent-kit 폴더 세션이 아니면 에이전트가 고칠 수 없다. 사용자가 직접 고친다.
      - 비밀 파일로 보이는 이름(`.env` 계열, `*.pem`·`*.key` 등 인증서·키, `.npmrc`, `credentials.json` 등)은 내용과 무관하게 에이전트 열람이 막힌다(공개 인증서, 토큰 없는 프로젝트 `.npmrc` 포함). 필요한 내용은 사용자가 대화에 붙여 준다.
-     - `~/.claude/settings.json`에 `cleanupPeriodDays`가 없으면 `36500`으로 넣어 Claude 대화 기록이 자동 삭제되지 않게 한다. `-Uninstall`은 이 값을 지우지 않으므로 필요하면 사용자가 직접 바꾼다.
+     - `install.ps1`로 Claude를 등록할 때는 `~/.claude/settings.json`에 `cleanupPeriodDays`가 없으면 `36500`으로 넣어 Claude 대화 기록이 자동 삭제되지 않게 한다(플러그인 설치는 이 값을 건드리지 않는다). `-Uninstall`은 이 값을 지우지 않으므로 필요하면 사용자가 직접 바꾼다.
 3. **내 기본 역할·모델 고정 (선택, `local-defaults.json`)**:
    - 새 프로젝트를 시작할 때마다 기본으로 채울 역할·모델 조합이 있으면 `<agent-kit>/local-defaults.json`(Git 제외 파일)에 실제 CLI 모델 ID를 적어 둔다:
      ```json
@@ -72,7 +82,8 @@
 | `templates/handoff/_TEMPLATE.md` | 작업 하나의 스펙(인계) 양식 | 설계자가 채운다 |
 | `skills/agent-delegate` | 다른 세션에 일을 맡기는 방법(헤드리스 검토·조사, 작업자 실행 `worker.md`) | 설계자·작업자 |
 | `RUNBOOK.md` | 도구 경로, hc·agy 요령, 확인된 제약, 에이전트 카탈로그, 반복 실패 시 하네스 수정(15절) | 막혔을 때 해당 절만 |
-| `install.ps1` | 최초 1회 글로벌 스킬 3종 등록 및 3사 `guard.mjs` 훅 병합 설치 (`-Uninstall` 지원) | 사용자 (최초 1회) |
+| `.claude-plugin/`, `hooks/hooks.json`, `.codex-plugin/`, `.agents/plugins/`, `.antigravity-plugin/`, `hooks.json` | 도구별 플러그인 매니페스트와 플러그인용 훅 등록 파일(이 저장소가 곧 플러그인 하나) | 각 도구의 플러그인 설치 명령 |
+| `install.ps1` | 스킬 3종 연결과 `guard.mjs` 훅 병합 등록(`-Tools <claude,codex,agy>`로 도구 선택, `-Uninstall` 지원) | 사용자 (최초 1회) |
 | `init.ps1`, `git-exclude.txt` | 템플릿 복사(경로 갱신 포함), Git 제외(`-TrackSpec` 선택 가능)와 `pre-push` 설치 | 설계자·작업자가 실행 |
 | `verify.ps1` | 인계 기준 고정(`-Prepare`), 검증 실행, 경량 수락(`-Accept` / `-Accept -Manual`), 제출 대조(`-CheckAccepted`), 접은 작업 닫기(`-Cancel`) | 작업자·설계자가 실행 |
 | `check-tools.ps1`, `tool-versions.txt` | 에이전트 도구 버전 변경 및 훅 무결성 점검. 반영 절차는 RUNBOOK 14절 | `init.ps1`이 실행 |

@@ -11,12 +11,13 @@
     - **설계자의 `-Accept`는 기본적으로 검사 명령을 중복 재실행하지 않는다.** 동일 `approval`·동일 `HEAD` 커밋에서 가장 최근 작업자 실행이 `PASS`이고 워킹트리가 깨끗한지 즉시 대조해 `accepted.json`을 기록한다(명령까지 강제 재실행하려면 `-Rerun` 추가).
     - `critical` 수락은 검토 보고의 `-ReviewedCommit <전체 해시>`와 `-ReviewReport <경로>`가 모두 필수이며, 보고서 안의 `판정: 진행 가능 | 높음 0`·`검토 commit`(HEAD 일치)·`검증 경로`(수락할 작업자 실행의 `OUT` 또는 수동 증거 경로 일치)를 기계적으로 검증한다. `-Accept`가 실패해도 작업자의 기존 `PASS` 기록은 보존되므로 수정 후 바로 다시 `-Accept`할 수 있다.
     - `verify: -` 수동 검증 Git 작업은 작업자 실행 시 `RESULT: NONE`(exit 3)이 나오며, 설계자가 수동 증거를 직접 확인한 뒤 `verify.ps1 -Id <ID> -Accept -Manual`을 실행하면 현재 `HEAD` 커밋과 증거 해시를 `accepted.json`에 기록해 `direct` 모드 `pre-push` 검증을 통과시킨다.
+  - **설계자 직접 구현(`impl: designer`)**: 인계 머리말에 `impl: designer`를 적으면 `-Accept`가 `-ReviewReport <맥락 없는 검토 보고>`를 요구하고 보고의 판정·`검토 commit`·`검증 경로`를 `critical`과 같은 방식으로 대조한다(`-ReviewedCommit`은 선택). `critical` 작업에는 쓸 수 없다.
   - **작업을 접을 때 `-Cancel`**: 사용자가 작업을 취소·중단하기로 하면 설계자가 `verify.ps1 -Id <ID> -Cancel`로 승인·수락을 닫는다(`approvals/`·`verify/runs/` 이력은 남고, 다시 `-Prepare`하면 재개된다). 닫지 않은 미수락 작업이 남아 있으면 `direct` 저장소의 기준 브랜치 push가 계속 막힌다.
   - **캐시·0건 테스트 차단**: 바뀌지 않은 일을 건너뛰거나 테스트가 실행되지 않은 출력(Gradle `UP-TO-DATE`·`FROM-CACHE`·`SKIPPED`·`NO-SOURCE` 및 실행 태스크 0개 요약, Go 전체 `(cached)` 또는 전체 `[no test files]`, Cargo 전체 `running 0 tests`[단 다른 타겟에서 1개 이상 실행됐으면 통과], Node `# tests 0`/`# pass 0`, Maven `Tests run: 0,`, `.NET` `Total tests: 0`, Pytest/Vitest 전원 skipped, Turborepo `FULL TURBO`, Nx 캐시 리플레이)은 실행 근거가 아니라 실패다.
   - 검증 전후 미커밋·미추적 소스/skip-worktree 숨긴 변경·Git 오류·검사 중 HEAD/추적 파일 변경은 실패다(`sparse-checkout`의 정상 `S` 표시는 허용). Git direct/local 통합은 `--ff-only`, 추가 commit이 필요하면 검증·수락을 다시 한다.
   - **`-TrackSpec` 저장소**: 프로젝트 루트의 설계자 소유 지침 파일(`AGENTS.md`·`CLAUDE.md`·`SPEC.md`·`SESSION_HANDOFF.md`·`agent-roles/`)은 미커밋 상태여도 위 더티 검사에서 제외하고 개수만 `SPEC-PENDING`으로 알린다. 이 파일들을 누가 언제 커밋할지는 착수 확인에서 정해 `SPEC.md` '제약'에 적는다. `direct`에서는 기준 브랜치의 지침 커밋이 다음 수락 커밋에 실려 push되거나, 열린 작업이 없을 때 따로 push된다.
-- 훅: `hooks/guard.mjs`(Claude `~/.claude/settings.json` PreToolUse `matcher: ".*"`, Codex `~/.codex/hooks.json`, Antigravity `~/.gemini/config/hooks.json`; `install.ps1`로 일괄 설치), `hooks/pre-push`(`init.ps1`이 `.git/hooks/pre-push`로 설치). 9절.
-- 스킬 원본: `<agent-kit>/skills/` (`install.ps1`로 일괄 등록). Claude(`~/.claude/skills/<이름>`)·Codex(`~/.agents/skills/<이름>`)는 정션(Windows `mklink /J`) 또는 심볼릭 링크(macOS·Linux `ln -sfn`)로 연결하고, Antigravity는 `~/.gemini/config/skills.json`의 `entries`에 `<agent-kit>/skills`를 네이티브로 등록한다. Windows 정션은 `cmd /c rmdir <정션 경로>`로만 지운다.
+- 훅: `hooks/guard.mjs`. Claude는 플러그인(`claude plugin install agent-kit@agent-kit`, 등록 파일 `hooks/hooks.json`)이나 `install.ps1`(`~/.claude/settings.json` PreToolUse `matcher: ".*"`) 중 하나로, Codex(`~/.codex/hooks.json`)와 Antigravity(`~/.gemini/config/hooks.json`)는 `install.ps1 -Tools codex,agy`로 등록한다. 한 도구에 두 방법을 함께 쓰지 않는다. `hooks/pre-push`는 `init.ps1`이 `.git/hooks/pre-push`로 설치한다. 9절.
+- 스킬 원본: `<agent-kit>/skills/`. Claude 플러그인은 이 폴더를 제자리에서 읽는다(스킬 이름 `agent-kit:<이름>`). `install.ps1`은 Claude(`~/.claude/skills/<이름>`)·Codex(`~/.agents/skills/<이름>`)를 정션(Windows `mklink /J`) 또는 심볼릭 링크(macOS·Linux `ln -sfn`)로 연결하고, Antigravity는 `~/.gemini/config/skills.json`의 `entries`에 `<agent-kit>/skills`를 네이티브로 등록한다. Windows 정션은 `cmd /c rmdir <정션 경로>`로만 지운다.
 - 회귀 테스트 일괄 실행: `node test.mjs` (개별 실행: `node hooks/guard.test.mjs`, `node hooks/pre-push.test.mjs`, `node install.test.mjs`, `node verify.test.mjs`, `node cleanup.test.mjs`, `node update-tools.test.mjs`).
 
 ## 2. hc 대기·읽기 (대화형 작업자·브라우저 조사 전용)
@@ -53,14 +54,16 @@
 - Antigravity는 전역 `~/.gemini/config/hooks.json`·`skills.json` 및 프로젝트 `.agents/` 설정을 읽으며, 규칙 파일로 `AGENTS.md`와 `GEMINI.md`를 모두 자동 발견한다(`AGENTS.md` 단일 파일만 두어 중복 로드를 피한다).
 
 ## 9. 훅
-- 훅은 실수를 막는 장치이지 보안 경계가 아니다. 실제 강제는 브랜치 보호, 토큰 범위, CLI 네이티브 샌드박스·권한 프로필로 한다.
-- `guard.mjs`가 막는 것:
+- 훅은 실수를 막는 장치이지 보안 경계가 아니다. 실제 강제는 브랜치 보호, 토큰 범위, CLI 네이티브 샌드박스·권한 프로필로 한다. `guard.mjs`는 자기 오류나 시간 초과 때 차단하지 않고 통과시킨다.
+- `guard.mjs`가 막는 것(경로 검사는 같은 명령 안의 `cd`·`Set-Location` 뒤 상대 경로와 `curl -o`·`Invoke-WebRequest -OutFile` 저장 경로까지 따라간다):
   - 비밀 파일 열람·편집(`.env` 계열[`.env.example`·`.env.test`·`.env.ci` 제외], 개인키·인증서·키스토어, SSH 키, 클라우드 ADC, 셸 히스토리, `.pypirc`, `.tfstate`, 인라인 Node/Python/PowerShell/`.NET` 스크립트 및 브라우저 `file://` 포함)
   - 테스트 계정·쿠키(`*test-accounts*.json`·`*cookies.txt`·`*.cookies`·`*storage-state*.json`) 열람·복사·기존 파일 덮어쓰기 및 `curl -v`/`-i`/`--trace` 헤더 평문 덤프
-  - 저장소 정책이 막는 `git push`와 `pre-push` 우회(`--no-verify`, `core.hooksPath`, `GIT_CONFIG_*`, `send-pack`), `git config agentkit.*` 직접 변조, 작업자의 `--match-head-commit` 없는 `gh pr merge`
-  - 권한·훅 우회 플래그(`--dangerously-*`, `bypassPermissions`, `--bare`, `--safe-mode`, `--restricted`, user 없는 `--setting-sources`, `-a never`, `danger-full-access` 등)
+  - 저장소 정책이 막는 `git push`(`agentkit.*` 설정이 하나도 없는, 키트로 설정한 적 없는 저장소에는 push 규칙을 적용하지 않는다)와 `pre-push` 우회(`--no-verify`, `core.hooksPath`, `GIT_CONFIG_*`, `send-pack`), `git config agentkit.*` 직접 변조, 작업자의 `--match-head-commit` 없는 `gh pr merge`
+  - 권한·훅 우회 플래그(`--dangerously-*`, `bypassPermissions`, `--bare`, `--safe-mode`, `--restricted`, user 없는 `--setting-sources`, `-a never`, `danger-full-access`, Codex `features.hooks=false`·`--disable hooks`, `--settings`의 `disableAllHooks` 등)
   - `.git/hooks`·`.git/config`·`.git` 삭제, `handoff/<ID>/`의 승인·수락·검증 증거(상위 폴더 삭제 포함) 직접 변경, 일반 세션의 `agent-kit/**` 및 전역·로컬 에이전트 설정(`.claude/`·`.mcp.json`·`.codex/`·`.gemini/`·`.agents/`·`.agent/`·`_agents/`·`hc-rate.json`) 변경, 훅 비활성화(`"enabled": false`, `"disableAllHooks": true`)
   - 하위 세션(`sub-*` 및 AGY `conversationId` 유지 스코프)의 `hc` 제어(`hc exec` 포함)·서브에이전트/워크플로 증식·`verify.ps1`·`init.ps1` 실행, 작업자 세션의 타 작업자 실행·`-Prepare`/`-Accept`/`-Cancel`(중첩 `powershell -Command` 포함)·정책 변경·직계 자식 외 터미널 제어.
+  - 작업자·하위 세션의 설계자 소유 지침 파일(키트 프로젝트 루트의 `AGENTS.md`·`SPEC.md`·`SESSION_HANDOFF.md`·`agent-roles/`) 변경, 작업자의 검토 보고서(`handoff/sub-…-review-<n>-report.md`) 작성, 다른 검토의 보고서 작성.
+  - 대리 승인: 승인 대기(`blocked`) 중인 터미널에 보내는 `hc keys`·`hc send`(거부하는 `esc`·`ctrl+c`만 허용).
 - 제출·호출 정책 설정: `init.ps1 -GitSetup -Target <저장소 루트> -Submission <pr|direct|local> [-ProtectedBranches <CSV>] [-Base <ref>] [-CrossAgentMode <auto|manual>] [-MaxVerifyFailures <int>] [-ProjectRoot <상위 폴더>] [-TrackSpec]`.
 
 ## 10. 세션·저장소 관리
@@ -71,13 +74,15 @@
 `init.ps1` 출력에 `SKIPPED`가 있으면 이미 지침 파일이 있는 프로젝트다(`init.ps1 -Target <프로젝트 폴더>`만 실행해도 미치환 토큰과 옮겨진 `agent-kit` 경로·옛 스킬 경로는 자동 갱신된다). 템플릿 본문까지 병합할 때는 `handoff/T00.md`(`review: normal`, `verify: -`)로 작업자에게 맡긴다. 기존 저장소에 프로젝트 고유 `CLAUDE.md`가 이미 있으면 상단에 `@AGENTS.md` 한 줄을 넣어 `AGENTS.md`가 함께 읽히게 하고, 과거에 복사된 래퍼 전용 `GEMINI.md`·`CLAUDE.md`는 제거해 이중 읽기를 없앤다.
 
 ## 12. 에이전트 카탈로그·역할 교체
-3사 모두 프로젝트 루트(및 모노레포·대형 저장소의 하위 모듈 폴더) `AGENTS.md`를 계층적으로 자동 로드한다(기존 `CLAUDE.md`가 따로 없을 때). 프로젝트 루트 `AGENTS.md` 역할 배정 표만 고치면 역할을 바꿀 수 있다.
+세 도구는 세션을 시작한 프로젝트 폴더의 `AGENTS.md`를 자동으로 읽는다. 프로젝트 루트 `AGENTS.md` 역할 배정 표만 고치면 역할을 바꿀 수 있다.
+- **`AGENTS.md`가 읽히지 않는 경우**(2026-11-25~26 실측): Claude는 작업 폴더나 그 상위 폴더에 `CLAUDE.md`·`CLAUDE.local.md`가 있으면 `AGENTS.md`를 읽지 않는다(그 파일에 `@AGENTS.md` 한 줄을 넣는다. `init.ps1`이 찾아서 경고한다). Claude·Codex는 지침이 Git에서 제외된 프로젝트의 worktree(`.worktrees/<id>`)에서 시작하면 메인 폴더의 `AGENTS.md`를 읽지 않는다. 그래서 인계 양식 첫 줄과 검토 작업 파일의 `역할 지침` 줄이 지침 경로를 직접 가리킨다.
+- 아래 표의 `확인`은 `probes/results.md`에 실행 기록이 있는 조합이고 날짜는 가장 최근 기록이다. `기록 없음`은 안 된다는 뜻이 아니라 시험 기록이 없다는 뜻이다.
 
 | 에이전트 | 자동으로 읽는 파일 | 설계자 | 작업자 | 검토자·조사 | guard 훅 | 스킬 등록 |
 |---|---|---|---|---|---|---|
-| Codex | `AGENTS.md` | 확인(`codex --no-daemon`) | 확인(대화형 `--no-daemon`) | 확인(`codex exec` 비대화형 `cell_review` 읽기 전용 + `handoff/<stem>` 쓰기 허용) | `~/.codex/hooks.json` | `~/.agents/skills` 링크 |
-| Claude | `AGENTS.md` (또는 기존 `CLAUDE.md`의 `@AGENTS.md`) | 확인(`claude`) | 확인(`claude --permission-mode auto` + 로컬 검증/Git `--allowedTools`) | 확인(`claude -p --permission-mode dontAsk --permission-prompts none --strict-mcp-config --no-session-persistence`) | `~/.claude/settings.json` (`matcher: ".*"`) | `~/.claude/skills` 링크 |
-| Antigravity | `AGENTS.md` | 확인(`agy`) | 확인(`agy --mode auto --sandbox`) | 확인(단발성 `agy --mode plan --sandbox --settings ... -p "<프롬프트>"`, 브라우저 조사만 대화형 `-i`) | `~/.gemini/config/hooks.json` | `~/.gemini/config/skills.json` |
+| Codex | `AGENTS.md` | 확인(2026-11-18, `codex --no-daemon`) | 확인(2026-11-14, 대화형 `--no-daemon`) | 확인(2026-11-25, `codex exec` 비대화형 `cell_review` 읽기 전용 + `handoff/<stem>` 쓰기 허용) | `~/.codex/hooks.json` | `~/.agents/skills` 링크 |
+| Claude | `AGENTS.md` (또는 `CLAUDE.md` 계열 파일의 `@AGENTS.md`) | 기록 없음(`claude`) | 확인(2026-11-14, `claude --permission-mode auto` + 로컬 검증/Git `--allowedTools`) | 확인(2026-11-25, `claude -p --permission-mode dontAsk --permission-prompts none --strict-mcp-config --no-session-persistence`) | 플러그인 `hooks/hooks.json` 또는 `~/.claude/settings.json` (`matcher: ".*"`) | 플러그인(제자리) 또는 `~/.claude/skills` 링크 |
+| Antigravity | `AGENTS.md` | 기록 없음(`agy`) | 기록 없음(`agy --mode auto --sandbox`) | 대화형 확인(2026-11-14). 단발성 `agy --mode plan --sandbox --settings ... -p "<프롬프트>"`는 명령 형식만 고쳤고 끝까지 실행은 미확인 | `~/.gemini/config/hooks.json` | `~/.gemini/config/skills.json` |
 
 ## 13. 테스트 자격증명·브라우저
 - 테스트 계정·쿠키·저장 상태 파일은 `handoff/<ID>/` 안에 새로 만들고 테스트 도구의 인자로만 넘긴다(열람·복사·기존 파일 덮어쓰기 및 `curl -v`/`-i`/`--trace` 헤더 출력은 `guard.mjs`가 차단한다).

@@ -370,6 +370,23 @@ check('-Cancel: approved.json만 지우고 approvals 이력은 보존',!existsSy
 fail('-Cancel 뒤 작업자 검증은 재승인 전까지 실패',run('GONE',{project:TS}),'snapshot missing');
 r=run('GONE',{project:TS,mode:'Cancel'}); check('-Cancel 재실행은 nothing to cancel',r.code===0 && /nothing to cancel/.test(r.out),r.out);
 r=run('TS',{project:TS,mode:'Cancel'}); check('-Cancel: 수락된 작업도 승인·수락을 함께 닫음',r.code===0 && !existsSync(join(TS,'handoff/TS/accepted.json')),r.out);
+// Direct path: a task the designer implements itself (impl: designer) is accepted only with a context-free review report.
+handoff('SELF','echo ok','impl: designer',TS); pass('직접 구현 작업 기준 고정',prepare('SELF',{project:TS}));
+check('직접 구현 표시가 승인 기록에 남음',JSON.parse(readFileSync(join(TS,'handoff/SELF/approved.json'),'utf8')).impl==='designer');
+const selfRun=run('SELF',{project:TS}); pass('직접 구현 작업 검증 실행',selfRun);
+const selfHead=git(['rev-parse','HEAD'],TS), selfRep=join(TS,'handoff','sub-self-review-1-report.md');
+fail('직접 구현 작업은 검토 보고 없이 수락 불가(만든 쪽이 스스로 수락하지 못함)',run('SELF',{project:TS,mode:'Accept'}),'requires -ReviewReport');
+writeFileSync(selfRep,'판정: 수정 후 진행 | 높음 1 | 중간 0 | 낮음 0\n검토 commit: '+selfHead+'\n검증 경로: '+selfRun.field('OUT')+'\n');
+fail('직접 구현 작업: 높음이 남은 검토 보고로는 수락 불가',run('SELF',{project:TS,mode:'Accept',reviewReport:selfRep}),'verdict is not pass');
+writeFileSync(selfRep,'판정: 진행 가능 | 높음 0 | 중간 1 | 낮음 0\n');
+fail('직접 구현 작업: 검토 commit·검증 경로 줄이 없는 보고로는 수락 불가',run('SELF',{project:TS,mode:'Accept',reviewReport:selfRep}),'missing 검토 commit');
+writeFileSync(selfRep,'판정: 진행 가능 | 높음 0 | 중간 1 | 낮음 0\n검토 commit: '+selfHead+'\n검증 경로: '+selfRun.field('OUT')+'\n');
+pass('직접 구현 작업: 맥락 없는 검토 보고(판정·commit·경로 일치)가 있으면 수락',run('SELF',{project:TS,mode:'Accept',reviewReport:selfRep}));
+pass('직접 구현 작업 제출 직전 대조',run('SELF',{project:TS,mode:'CheckAccepted'}));
+handoff('SELFCRIT','echo ok','review: critical\nimpl: designer',TS);
+check('critical 작업은 직접 구현으로 고정할 수 없음(code2)',prepare('SELFCRIT',{project:TS}).code===2);
+handoff('BADIMPL','echo ok','impl: someone',TS);
+check('잘못된 impl 값 거부(code2)',prepare('BADIMPL',{project:TS}).code===2);
 check('-Cancel과 다른 모드 동시 지정은 code2',spawnSync(PWSH,[...PWSH_BASE,'-File',VERIFY,'-Id','TS','-Project',TS,'-Cancel','-Accept'],{encoding:'utf8'}).status===2);
 
 console.log(bad ? bad+' FAIL / '+total : 'ALL PASS ('+total+')'); process.exit(bad?1:0);

@@ -1,6 +1,9 @@
-﻿param(
+﻿# -Tools limits the run to some tools (claude, codex, agy). Use it when one tool is installed as a plugin instead
+# (e.g. Claude Code through `claude plugin install`): registering the guard twice for one tool runs it twice per call.
+param(
     [string]$HomeDir = '',
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [string]$Tools = 'claude,codex,agy'
 )
 $ErrorActionPreference = 'Stop'
 try {
@@ -8,6 +11,12 @@ try {
     $OutputEncoding = [System.Text.Encoding]::UTF8
 } catch {}
 
+$toolSet = @($Tools -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+$badTools = @($toolSet | Where-Object { $_ -notin @('claude', 'codex', 'agy') })
+if (-not $toolSet.Count -or $badTools.Count) {
+    Write-Error "-Tools takes a comma-separated list of claude, codex, agy (got: $Tools)"
+    exit 2
+}
 $kitRoot = $PSScriptRoot
 $kitRootSlash = $kitRoot -replace '\\', '/'
 if ($kitRootSlash -match '[\s&;|<>`"$()''\[\]]') {
@@ -99,10 +108,9 @@ function Set-SkillLink([string]$TargetDir, [string]$SourceDir) {
 }
 
 $skillNames = @('agent-kit-start', 'agent-delegate', 'agent-session-cleanup')
-$linkDirs = @(
-    (Join-Path (Join-Path $HomeDir '.claude') 'skills'),
-    (Join-Path (Join-Path $HomeDir '.agents') 'skills')
-)
+$linkDirs = @()
+if ('claude' -in $toolSet) { $linkDirs += (Join-Path (Join-Path $HomeDir '.claude') 'skills') }
+if ('codex' -in $toolSet) { $linkDirs += (Join-Path (Join-Path $HomeDir '.agents') 'skills') }
 $agySkillsRoot = Join-Path (Join-Path (Join-Path $HomeDir '.gemini') 'config') 'skills'
 
 $skillCount = 0
@@ -124,7 +132,7 @@ foreach ($root in $linkDirs) {
 }
 
 # Remove legacy Antigravity connector stub files (replaced by native ~/.gemini/config/skills.json)
-foreach ($legacyName in ($skillNames + @('antigravity-delegate'))) {
+foreach ($legacyName in $(if ('agy' -in $toolSet) { $skillNames + @('antigravity-delegate') } else { @() })) {
     $legacyAgyDir = Join-Path $agySkillsRoot $legacyName
     $legacyAgyFile = Join-Path $legacyAgyDir 'SKILL.md'
     if (Test-Path -LiteralPath $legacyAgyFile) {
@@ -146,6 +154,7 @@ const homeDir = process.env.AGENTKIT_INSTALL_HOME;
 const kitRootSlash = process.env.AGENTKIT_INSTALL_ROOT;
 const mode = process.env.AGENTKIT_INSTALL_MODE;
 const uninstall = mode === 'uninstall';
+const tools = new Set(String(process.env.AGENTKIT_INSTALL_TOOLS || 'claude,codex,agy').split(','));
 const guardCmd = `node ${kitRootSlash}/hooks/guard.mjs`;
 const agySkillsEntry = `${kitRootSlash}/skills`;
 const isGuardCmd = (c) => typeof c === 'string' && (c.includes('/hooks/guard.mjs') || c.includes('\\hooks\\guard.mjs'));
@@ -216,7 +225,7 @@ let agySkillsCount = 0;
 
 // 1. Claude: ~/.claude/settings.json
 const claudePath = path.join(homeDir, '.claude', 'settings.json');
-if (!uninstall || fs.existsSync(claudePath)) {
+if (tools.has('claude') && (!uninstall || fs.existsSync(claudePath))) {
   const claudeObj = readJson(claudePath) || {};
   if (!uninstall && claudeObj.cleanupPeriodDays === undefined) {
     claudeObj.cleanupPeriodDays = 36500;
@@ -239,7 +248,7 @@ if (!uninstall || fs.existsSync(claudePath)) {
 
 // 2. Codex: ~/.codex/hooks.json
 const codexPath = path.join(homeDir, '.codex', 'hooks.json');
-if (!uninstall || fs.existsSync(codexPath)) {
+if (tools.has('codex') && (!uninstall || fs.existsSync(codexPath))) {
   const codexObj = readJson(codexPath) || {};
   if (!codexObj.hooks || typeof codexObj.hooks !== 'object') {
     codexObj.hooks = {};
@@ -258,7 +267,7 @@ if (!uninstall || fs.existsSync(codexPath)) {
 
 // 3. Antigravity: ~/.gemini/config/hooks.json & ~/.gemini/config/skills.json
 const agyPath = path.join(homeDir, '.gemini', 'config', 'hooks.json');
-if (!uninstall || fs.existsSync(agyPath)) {
+if (tools.has('agy') && (!uninstall || fs.existsSync(agyPath))) {
   const agyObj = readJson(agyPath) || {};
   if (uninstall) {
     delete agyObj['agent-kit-guard'];
@@ -277,7 +286,7 @@ if (!uninstall || fs.existsSync(agyPath)) {
 }
 
 const agySkillsJsonPath = path.join(homeDir, '.gemini', 'config', 'skills.json');
-if (!uninstall || fs.existsSync(agySkillsJsonPath)) {
+if (tools.has('agy') && (!uninstall || fs.existsSync(agySkillsJsonPath))) {
   const skillsObj = readJson(agySkillsJsonPath) || {};
   const entries = Array.isArray(skillsObj.entries) ? skillsObj.entries : [];
   if (uninstall) {
@@ -313,8 +322,9 @@ $modeArg = if ($Uninstall) { 'uninstall' } else { 'install' }
 $env:AGENTKIT_INSTALL_HOME = $HomeDir
 $env:AGENTKIT_INSTALL_ROOT = $kitRootSlash
 $env:AGENTKIT_INSTALL_MODE = $modeArg
+$env:AGENTKIT_INSTALL_TOOLS = ($toolSet -join ',')
 $nodeOut = & node -e $nodeScript
-Remove-Item Env:\AGENTKIT_INSTALL_HOME, Env:\AGENTKIT_INSTALL_ROOT, Env:\AGENTKIT_INSTALL_MODE -ErrorAction SilentlyContinue
+Remove-Item Env:\AGENTKIT_INSTALL_HOME, Env:\AGENTKIT_INSTALL_ROOT, Env:\AGENTKIT_INSTALL_MODE, Env:\AGENTKIT_INSTALL_TOOLS -ErrorAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) {
     Write-Error "failed to configure hook/skill JSON files"
     exit 1
@@ -337,3 +347,5 @@ if ($LASTEXITCODE -ne 0 -or $probeOut -notmatch '"permissionDecision"\s*:\s*"den
 }
 
 Write-Output "INSTALL: OK (path=$kitRootSlash, skills=$skillCount, hooks=$hookCount, guard=PASS)"
+if ('codex' -in $toolSet) { Write-Output 'NEXT: Codex runs a new or changed hook only after you trust it. Open Codex and check /hooks once.' }
+if ('claude' -in $toolSet) { Write-Output 'NOTE: Claude Code can load this folder as a plugin instead (claude plugin install agent-kit@agent-kit). Use one way per tool: with the plugin installed, run install.ps1 -Tools codex,agy.' }

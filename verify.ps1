@@ -212,7 +212,7 @@ if ($lines.Count -and $lines[0].Trim() -eq '---') {
         $trimmed = $lines[$i].Trim()
         if ($trimmed -eq '---') { break }
         if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
-        if ($lines[$i] -match '^(id|verify|base|review|deps|worktree):\s*(.*)$') {
+        if ($lines[$i] -match '^(id|verify|base|review|deps|worktree|impl):\s*(.*)$') {
             $k = $Matches[1]
             if ($header.ContainsKey($k)) { Usage "duplicate header: $k" }
             $header[$k] = $Matches[2].Trim()
@@ -286,9 +286,12 @@ if ($Prepare) {
     $approved = [ordered]@{
         version=1; approval=[guid]::NewGuid().ToString('N'); id=$Id; repo=$Repo; common=$common
         handoffHash=$handoffHash; specHash=(Spec-Hash); command=$cmd; review=$(if ($header['review']) { $header['review'] } else { 'normal' })
+        impl=$(if ($header['impl']) { $header['impl'] } else { 'worker' })
         baseRef=$baseRef; baseCommit=$baseCommit; prepared=(Get-Date).ToString('o')
     }
     if ($approved.review -notin @('normal', 'critical')) { Usage 'review must be normal or critical' }
+    if ($approved.impl -notin @('worker', 'designer')) { Usage 'impl must be worker or designer' }
+    if ($approved.impl -eq 'designer' -and $approved.review -eq 'critical') { Usage 'impl: designer is only for small normal tasks; a critical task goes to a worker' }
     Write-Json (Join-Path (Join-Path $task 'approvals') "$($approved.approval).json") $approved
     Write-Json $approvedPath $approved
     Clear-Accepted
@@ -347,8 +350,13 @@ $reviewInfo = @{ path = ''; verdict = '' }
 $workerRun = $null
 if ($Accept) {
     $isCrit = ($approved.review -eq 'critical')
+    # A task the designer implemented itself (impl: designer) is accepted only with a context-free review report:
+    # the session that made the change does not accept its own work.
+    $isSelfMade = ($approved.PSObject.Properties['impl'] -and [string]$approved.impl -eq 'designer')
+    $needsReview = ($isCrit -or $isSelfMade)
     if ($isCrit -and -not $ReviewedCommit) { Fail 'critical acceptance requires -ReviewedCommit from the review report' }
     if ($isCrit -and -not $ReviewReport) { Fail 'critical acceptance requires -ReviewReport pointing to the pass review report' }
+    if ($isSelfMade -and -not $ReviewReport) { Fail 'designer-implemented task (impl: designer) requires -ReviewReport from a context-free review; the maker does not accept its own work' }
     if ($ReviewedCommit -and $ReviewedCommit -cne $head) { Fail 'reviewed commit differs from current HEAD' }
     $stateNow = State
     if ($stateNow.dirty -or $gitErrors.Count) { Fail 'uncommitted or hidden changes (before/after)' }
@@ -357,8 +365,8 @@ if ($Accept) {
 
     if (-not $cmd -and $Manual) {
         $evDir = Join-Path $task 'evidence'
-        if ($isCrit -and $evAccept.list.Count -eq 0) { Fail "critical manual acceptance requires evidence files under handoff/$Id/evidence" }
-        $reviewInfo = Validate-ReviewReport $ReviewReport $head $isCrit '' $evDir
+        if ($needsReview -and $evAccept.list.Count -eq 0) { Fail "$(if ($isCrit) { 'critical' } else { 'designer-implemented' }) manual acceptance requires evidence files under handoff/$Id/evidence" }
+        $reviewInfo = Validate-ReviewReport $ReviewReport $head $needsReview '' $evDir
         $diffCheck = @(Read-Git @('diff', "$($approved.baseCommit)...HEAD"))
         $specHashNow = Spec-Hash
         $manualRec = [ordered]@{
@@ -377,7 +385,7 @@ if ($Accept) {
     if (-not $workerRun -or $workerRun.result -ne 'PASS' -or $workerRun.approval -ne $approved.approval -or $workerRun.commit -ne $head) {
         Fail 'acceptance requires a prior worker PASS on this commit and approval'
     }
-    $reviewInfo = Validate-ReviewReport $ReviewReport $head $isCrit ([string]$workerRun.run) ''
+    $reviewInfo = Validate-ReviewReport $ReviewReport $head $needsReview ([string]$workerRun.run) ''
     # Prevent duplicate re-acceptance without destroying the valid existing acceptance (`-CheckAccepted` remains valid).
     if ($existingAccepted -and $existingAccepted.approval -eq $approved.approval -and $existingAccepted.commit -eq $head -and (Test-SamePath ([string]$existingAccepted.workerRun) ([string]$workerRun.run)) -and -not $Rerun) {
         $sameRep = (-not $ReviewReport -and -not $existingAccepted.reviewReport) -or ($ReviewReport -and $existingAccepted.reviewReport -and (Test-SamePath ([string]$existingAccepted.reviewReport) ([string]$reviewInfo.path)))

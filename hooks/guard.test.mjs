@@ -1,13 +1,16 @@
 // Regression test for guard.mjs. Run: node <agent-kit>/hooks/guard.test.mjs (tests the guard.mjs next to it)
 // Creates a throwaway repo (main) + worktree (feat) in the temp folder to check push rules.
 import { execSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const GUARD = join(dirname(fileURLToPath(import.meta.url)), 'guard.mjs'); // the guard next to this test (also works in a worktree)
 const TMP = mkdtempSync(join(tmpdir(), 'guardtest-'));
 execSync(`git init -q -b main "${TMP}/repo" && git -C "${TMP}/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "${TMP}/repo" worktree add -q -b feat "${TMP}/repo-wt"`);
+// `repo` is a kit repository that has no submission mode yet (init.ps1 stores agentkit.projectRoot): main/master stay
+// protected there. `plain` has no agentkit.* key at all, so the push rules do not apply to it.
+execSync(`git -C "${TMP}/repo" config agentkit.projectRoot "${TMP}/repo" && git init -q -b main "${TMP}/plain" && git -C "${TMP}/plain" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`);
 // Repos with a submission policy (local Git config, as init.ps1 writes it): direct (nothing protected), local (no pushes,
 // with a worktree), pr protecting develop (checked out on develop).
 for (const [name, cfg] of [['direct', 'agentkit.submission direct'], ['local', 'agentkit.submission local'], ['dev', 'agentkit.submission pr'], ['manual', 'agentkit.crossAgentMode manual']]) {
@@ -17,6 +20,10 @@ execSync(`git -C "${TMP}/dev" config agentkit.protectedBranches develop && git -
 process.argv[2] = TMP.split(String.fromCharCode(92)).join('/');
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
 const B = String.fromCharCode(92), R = process.argv[2];
+// A kit project root (it holds agent-roles/ and SESSION_HANDOFF.md): designer-owned files here are closed to workers.
+const KITPROJ = R + '/kitproj';
+mkdirSync(join(TMP, 'kitproj', 'agent-roles'), { recursive: true });
+writeFileSync(join(TMP, 'kitproj', 'SESSION_HANDOFF.md'), '# status\n');
 const bash = (c, cwd) => ({ tool_name: 'Bash', tool_input: { command: c }, cwd });
 const codex = (tool, c, cwd) => ({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: { command: c }, cwd: cwd || 'C:/p', permission_mode: 'default' });
 const FLAG = ['--dangerously', 'skip', 'permissions'].join('-');
@@ -220,7 +227,10 @@ const cases = [
   ['ALLOW', 'git -C <direct> push origin main (정책 없는 폴더에서)', bash('git -C ' + R + '/direct push origin main', R + '/repo-wt')],
   ['BLOCK', 'git -C <local> push (direct 폴더에서)', bash('git -C ' + R + '/local push origin feat', R + '/direct')],
   ['BLOCK', 'git -C <정책 없는 main 저장소> push origin main (direct 폴더에서)', bash('git -C ' + R + '/repo push origin main', R + '/direct')],
-  ['BLOCK', '저장소 밖 폴더: push origin master (옛 기본값)', bash('git push origin master', 'C:/p')],
+  ['ALLOW', '저장소 밖 폴더(키트 설정 없음): push origin master는 가드가 막지 않음', bash('git push origin master', 'C:/p')],
+  ['ALLOW', '키트 설정이 없는 일반 저장소: push origin main은 가드가 막지 않음', bash('git push origin main', R + '/plain')],
+  ['ALLOW', '키트 설정이 없는 일반 저장소: main에서 git push도 막지 않음', bash('git push', R + '/plain')],
+  ['BLOCK', '키트 설정이 없는 일반 저장소에서도 --no-verify push는 차단', bash('git push --no-verify origin main', R + '/plain')],
   ['BLOCK', '전역 설정 submission=direct는 쓰지 않음: 정책 없는 저장소의 main push', bash('git push origin main', R + '/repo')],
   // pre-push hook must not be skipped
   ['BLOCK', 'git push --no-verify', bash('git push --no-verify -u origin feat', R + '/repo-wt')],
@@ -265,7 +275,7 @@ const cases = [
   // unexpected Codex input shapes are still checked (G04)
   ['BLOCK', 'shell 도구 + argv 배열', { tool_name: 'shell', tool_input: { command: ['powershell.exe', '-Command', 'Get-Content C:/p/.env'] }, cwd: 'C:/p' }],
   ['BLOCK', 'Bash + cmd 필드', { tool_name: 'Bash', tool_input: { cmd: 'cat C:/p/.env' }, cwd: 'C:/p' }],
-  ['BLOCK', 'exec_command + cmd 문자열', { tool_name: 'exec_command', tool_input: { cmd: 'git push origin main' }, cwd: 'C:/p' }],
+  ['BLOCK', 'exec_command + cmd 문자열', { tool_name: 'exec_command', tool_input: { cmd: 'git push origin main' }, cwd: R + '/repo' }],
   ['BLOCK', '알 수 없는 도구 + command 필드', { tool_name: 'run_terminal', tool_input: { command: 'type C:/p/.env' }, cwd: 'C:/p' }],
   ['ALLOW', 'command 없는 MCP 도구', { tool_name: 'mcp__notion__search', tool_input: { query: '.env' }, cwd: 'C:/p' }],
   // leading assignments
@@ -296,7 +306,8 @@ const cases = [
   ['DENY', 'agy write_file .env', agy('write_file', { Path: 'C:/p/.env', Content: 'x' })],
   ['DENY', 'agy edit_file 테스트 계정', agy('edit_file', { Path: 'C:/p/handoff/T01/test-accounts.json', Target: 'a', Replacement: 'b' })],
   ['DENY', 'agy run_command Get-Content .env', agy('run_command', { CommandLine: 'Get-Content C:/p/.env' })],
-  ['DENY', 'agy run_command push origin main', agy('run_command', { CommandLine: 'git push origin main' })],
+  ['DENY', 'agy run_command push origin main', agy('run_command', { CommandLine: 'git -C ' + R + '/repo push origin main' })],
+  ['DENY', 'agy run_command: Cwd 인자로 옮겨 간 폴더의 보호 파일 삭제', agy('run_command', { CommandLine: 'rm accepted.json', Cwd: 'C:/p/handoff/T01' })],
   ['DENY', 'agy run_command 우회 플래그로 claude 실행', agy('run_command', { CommandLine: 'claude ' + FLAG })],
   ['ALLOW', 'agy run_command npm test(일반 세션)', agy('run_command', { CommandLine: 'npm test' })],
   ['ALLOW', 'agy 브라우저 등 그 밖의 도구', agy('browser_click', { Selector: '#a' })],
@@ -364,7 +375,10 @@ const cases = [
   ['ALLOW', "프로젝트 약칭 이름(sub-<p>-<id>-review-4, '--')은 허용", bash("hc run --bg --name sub-myshop-t01-review-4 --cwd C:/p '--' claude \"Read handoff/sub-myshop-t01-review-4.md and follow it.\"")],
   ['BLOCK', "PreToolUse 이벤트(Codex 형태)의 검토 상한도 deny JSON", codex('shell', "hc run --bg --name sub-myshop-t01-review-5 --cwd C:/p '--' codex --no-daemon \"Read handoff/sub-myshop-t01-review-5.md and follow it.\"")],
   ['ALLOW', '설계자 세션에서 AGY 터미널에 직접 hc send 허용', codex('shell', 'hc send agy-by-argv "Read handoff/T01.md"')],
-  ['ALLOW', '설계자 세션에서 AGY 터미널에 직접 hc keys 허용', bash('hc --json keys agy-by-foreground enter')],
+  ['BLOCK', '설계자 세션: 승인 대기(blocked) 터미널에 enter를 대신 누르지 않는다(대리 승인)', bash('hc --json keys agy-by-foreground enter'), '대리 승인'],
+  ['ALLOW', '설계자 세션: 승인 대기 터미널에 esc(거부)는 허용', bash('hc keys agy-by-foreground esc')],
+  ['BLOCK', '설계자 세션: 승인 대기 터미널에 hc send로 승인 문자를 보내는 것도 차단', bash('hc send agy-by-foreground "y"'), '대리 승인'],
+  ['ALLOW', '설계자 세션: 승인 대기가 아닌 작업자 터미널에는 hc keys enter 허용', bash('hc keys task-t01 enter')],
   ['ALLOW', '설계자 세션에서 working AGY 터미널에도 직접 hc interrupt 허용', bash('hc interrupt agy-by-app')],
   ['ALLOW', '설계자 세션에서 다른 에이전트 터미널에 입력 허용', bash('hc send task-t01 "Continue"')],
   ['ALLOW', '설계자 세션에서 셸 터미널에 키 입력 허용', bash('hc keys named-shell enter')],
@@ -392,7 +406,32 @@ const cases = [
   ['BLOCK', '작업자 세션: init.ps1 정책 변경 플래그 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/init.ps1 -GitSetup -Submission direct'), '정책을 변경', 'worker-caller'],
   ['BLOCK', '작업자 세션: 설계자/타 터미널에 hc send 차단', bash('hc send named-shell "hi"'), '직계 자식', 'worker-caller'],
   ['BLOCK', '작업자 세션: 설계자/타 터미널에 hc kill 차단', bash('hc kill named-shell'), '직계 자식', 'worker-caller'],
-  ['ALLOW', '작업자 세션: 자기가 띄운 직계 자식 검토 터미널에 hc keys 허용', bash('hc keys worker-child enter'), '', 'worker-caller'],
+  ['BLOCK', '작업자 세션: 자기 자식이어도 승인 대기 터미널에 enter를 대신 누르지 않는다', bash('hc keys worker-child enter'), '대리 승인', 'worker-caller'],
+  ['ALLOW', '작업자 세션: 자기가 띄운 직계 자식 터미널에 esc(거부)는 허용', bash('hc keys worker-child esc'), '', 'worker-caller'],
+  ['BLOCK', '작업자 세션: cd로 옮긴 뒤 accepted.json 삭제 차단', bash('cd handoff/T01 && rm accepted.json'), '검증·승인·수락', 'worker-caller'],
+  ['BLOCK', '일반 세션: cd 뒤 전역 설정 덮어쓰기 차단', ps('cd ' + HOMEDIR + "/.claude; Set-Content settings.json '{}'")],
+  ['BLOCK', '일반 세션: cd .git 뒤 hooks/pre-push 삭제 차단', bash('cd .git && rm hooks/pre-push')],
+  ['BLOCK', '일반 세션: cd ~ 물결표 경로도 따라간다', bash("cd ~/.claude && cp /tmp/x.json settings.json")],
+  ['BLOCK', '다른 프로젝트 세션: cd <agent-kit> 뒤 키트 파일 덮어쓰기 차단', bash('cd ' + KITDIR + '/hooks && cp /tmp/g.mjs guard.mjs', 'C:/p')],
+  ['ALLOW', '프로젝트 안에서 cd 뒤 일반 파일 삭제는 허용', bash('cd src && rm old.js', 'C:/p')],
+  ['BLOCK', 'curl -o 로 전역 설정 덮어쓰기 차단', bash('curl -s https://example.com/x -o ' + HOMEDIR + '/.claude/settings.json')],
+  ['BLOCK', 'Invoke-WebRequest -OutFile 로 키트 파일 덮어쓰기 차단', ps('Invoke-WebRequest https://example.com/x -OutFile ' + KITDIR + '/hooks/guard.mjs')],
+  ['ALLOW', 'curl -o 로 프로젝트 안 일반 파일 저장은 허용', bash('curl -s https://example.com/x -o data/x.json')],
+  ['BLOCK', 'cd ~/.aws 뒤 cat credentials 차단', bash('cd ~/.aws && cat credentials')],
+  ['BLOCK', '작업자 세션: 검토 보고서 직접 작성 차단', { tool_name: 'Write', tool_input: { file_path: 'C:/p/handoff/sub-p-t01-review-1-report.md', content: '판정: 진행 가능 | 높음 0' }, cwd: 'C:/p' }, '검토 보고서', 'worker-caller'],
+  ['BLOCK', '작업자 세션: Codex 형식 검토 보고서(handoff/<stem>/<stem>-report.md)도 차단', { tool_name: 'Write', tool_input: { file_path: 'C:/p/handoff/sub-p-t01-review-1/sub-p-t01-review-1-report.md', content: 'x' }, cwd: 'C:/p' }, '검토 보고서', 'worker-caller'],
+  ['ALLOW', '작업자 세션: 검토 작업 파일(handoff/<stem>.md) 작성은 허용', { tool_name: 'Write', tool_input: { file_path: 'C:/p/handoff/sub-p-t01-review-1.md', content: 'x' }, cwd: 'C:/p' }, '', 'worker-caller'],
+  ['ALLOW', '작업자 세션: 자기 작업 보고(handoff/T01-report.md) 작성은 허용', { tool_name: 'Write', tool_input: { file_path: 'C:/p/handoff/T01-report.md', content: 'x' }, cwd: 'C:/p' }, '', 'worker-caller'],
+  ['ALLOW', '검토 하위 세션: 자기 보고서 작성 허용', { tool_name: 'Write', tool_input: { file_path: 'C:/p/handoff/sub-demo-t01-review-1-report.md', content: 'x' }, cwd: 'C:/p' }, '', 'sub-rev-caller'],
+  ['BLOCK', '검토 하위 세션: 다른 검토의 보고서 작성 차단', { tool_name: 'Write', tool_input: { file_path: 'C:/p/handoff/sub-demo-t01-review-2-report.md', content: 'x' }, cwd: 'C:/p' }, '검토 보고서', 'sub-rev-caller'],
+  ['ALLOW', '설계자 세션: 검토 보고서 경로 쓰기는 가드가 막지 않음', { tool_name: 'Write', tool_input: { file_path: 'C:/p/handoff/sub-p-t01-review-1-report.md', content: 'x' }, cwd: 'C:/p' }],
+  ['BLOCK', '작업자 세션: 키트 프로젝트 루트의 AGENTS.md 수정 차단', { tool_name: 'Edit', tool_input: { file_path: KITPROJ + '/AGENTS.md', old_string: 'a', new_string: 'b' }, cwd: KITPROJ }, '설계자 소유', 'worker-caller'],
+  ['BLOCK', '작업자 세션: agent-roles/REVIEWER.md 수정 차단', { tool_name: 'Edit', tool_input: { file_path: KITPROJ + '/agent-roles/REVIEWER.md', old_string: 'a', new_string: 'b' }, cwd: KITPROJ }, '설계자 소유', 'worker-caller'],
+  ['BLOCK', '작업자 세션: 셸로 SPEC.md 덮어쓰기 차단', bash('cp /tmp/x.md SPEC.md', KITPROJ), '설계자 소유', 'worker-caller'],
+  ['BLOCK', '검토 하위 세션: SESSION_HANDOFF.md 수정 차단', { tool_name: 'Edit', tool_input: { file_path: KITPROJ + '/SESSION_HANDOFF.md', old_string: 'a', new_string: 'b' }, cwd: KITPROJ }, '설계자 소유', 'sub-rev-caller'],
+  ['ALLOW', '설계자 세션: 키트 프로젝트의 SPEC.md 수정 허용', { tool_name: 'Edit', tool_input: { file_path: KITPROJ + '/SPEC.md', old_string: 'a', new_string: 'b' }, cwd: KITPROJ }],
+  ['ALLOW', '작업자 세션: 키트 프로젝트가 아닌 폴더의 SPEC.md(제품 문서)는 허용', { tool_name: 'Edit', tool_input: { file_path: 'C:/p/docs/SPEC.md', old_string: 'a', new_string: 'b' }, cwd: 'C:/p' }, '', 'worker-caller'],
+  ['ALLOW', '작업자 세션: 키트 프로젝트의 일반 소스 수정은 허용', { tool_name: 'Edit', tool_input: { file_path: KITPROJ + '/src/app.js', old_string: 'a', new_string: 'b' }, cwd: KITPROJ }, '', 'worker-caller'],
   ['ALLOW', '커밋 메시지에 verify.ps1 -Prepare 언급은 오탐 없음', bash('git commit -m "docs: verify.ps1 -Prepare 설명"'), '', 'worker-caller'],
   ['BLOCK', '작업자 세션: verify.ps1 -A (축약 플래그) 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -A'), '-Accept', 'worker-caller'],
   ['BLOCK', '작업자 세션: verify.ps1 -Pre (축약 플래그) 실행 차단', ps('powershell -NoProfile -ExecutionPolicy Bypass -File C:/agent-kit/verify.ps1 -Id T01 -Pre'), '-Prepare', 'worker-caller'],
@@ -427,6 +466,10 @@ const cases = [
   ['BLOCK', 'Claude --bare 훅 우회 플래그 차단', bash('claude --bare "do it"')],
   ['BLOCK', 'Claude --safe-mode 훅 우회 플래그 차단', bash('claude --safe-mode "do it"')],
   ['BLOCK', 'Claude --restricted(사용자 설정의 훅을 읽지 않는 모드) 차단', bash('claude --restricted -p "do it"')],
+  ['BLOCK', 'Codex -c features.hooks=false(훅 끄기) 차단', bash('codex exec -c features.hooks=false "do it"')],
+  ['BLOCK', 'Codex --disable hooks(훅 끄기) 차단', bash('codex exec --disable hooks "do it"')],
+  ['BLOCK', "Claude --settings '{\"disableAllHooks\":true}' 차단", bash(`claude --settings '{"disableAllHooks":true}' -p "do it"`)],
+  ['ALLOW', 'Codex -c features.hooks=true 는 허용', bash('codex exec -c features.hooks=true "do it"')],
   ['ALLOW', '커밋 메시지의 --restricted 언급은 오탐 없음', bash('git commit -m "docs: claude --restricted 차단 설명"')],
   ['BLOCK', 'Claude --setting-sources project(user 누락) 차단', bash('claude --setting-sources project "do it"')],
   ['ALLOW', 'Claude --setting-sources user,project 허용', bash('claude --setting-sources user,project "do it"')],
@@ -523,6 +566,7 @@ const agyLaunch = (stem) => bash(`hc run --bg --name ${stem} --cwd C:/p -- agy.e
   checkRate('속도 제한: 첫 AGY 실행 허용', 'ALLOW', agyLaunch('sub-p-t01-review-1'), { rateFile: rf, nowMs: T0 + 1000 });
   checkRate('속도 제한: 10초 뒤 연속 AGY 실행은 30초 간격으로 차단', 'BLOCK', agyLaunch('sub-p-t02-review-1'), { rateFile: rf, nowMs: T0 + 11_000 }, '최소 30초');
   checkRate('속도 제한: 31초 뒤 다음 AGY 실행은 허용', 'ALLOW', agyLaunch('sub-p-t02-review-1'), { rateFile: rf, nowMs: T0 + 32_000 });
+  checkRate('속도 제한: 가드가 두 번 등록돼 같은 호출이 0.1초 뒤 다시 보여도 한 번으로 센다', 'ALLOW', agyLaunch('sub-p-t02-review-1'), { rateFile: rf, nowMs: T0 + 32_100 });
   checkRate('속도 제한: 한 명령에 AGY 실행 2개 연달아 적으면 차단', 'BLOCK', bash(`hc run --bg --name sub-p-t03-review-1 --cwd C:/p -- agy.exe --mode plan -i "Read handoff/sub-p-t03-review-1.md and follow it." && hc run --bg --name sub-p-t04-review-1 --cwd C:/p -- agy.exe --mode plan -i "Read handoff/sub-p-t04-review-1.md and follow it."`), { rateFile: rf, nowMs: T0 + 90_000 }, '최소 30초');
 }
 // 2) AGY 10분 6회 상한

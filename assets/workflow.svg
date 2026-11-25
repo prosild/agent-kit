@@ -48,7 +48,7 @@
   <rect x="404" y="150" width="310" height="14" fill="#d97706"/>
   <text x="559" y="148" fill="#ffffff" font-size="16" font-weight="700" text-anchor="middle">설계자 (Designer)</text>
 
-  <text x="424" y="196" fill="#92400e" font-size="14" font-weight="700">• 코드는 읽지만 직접 쓰지 않음</text>
+  <text x="424" y="196" fill="#92400e" font-size="14" font-weight="700">• 작은 일반 작업만 직접 구현</text>
   <text x="424" y="226" fill="#1e293b" font-size="13.5">• 설계 · 결정 이유 → <tspan fill="#b45309" font-weight="700">SPEC.md</tspan></text>
   <text x="424" y="254" fill="#1e293b" font-size="13.5">• 진행 상태 표 → <tspan fill="#b45309" font-weight="700">SESSION_HANDOFF.md</tspan></text>
   <text x="424" y="282" fill="#1e293b" font-size="13.5">• 작업별 스펙 → <tspan fill="#b45309" font-weight="700">handoff/&lt;ID&gt;.md</tspan></text>

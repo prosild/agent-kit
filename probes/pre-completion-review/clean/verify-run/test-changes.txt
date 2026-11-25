@@ -1,0 +1,3 @@
+(no modified/deleted test, skip, or removed-assertion signals; not a proof that assertions were preserved)
+# added test files (not counted as risk signals):
+A	test/admin-guard.test.js

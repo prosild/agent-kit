@@ -353,7 +353,32 @@ foreach ($sub in Get-ChildItem -LiteralPath $src -Directory) {
         }
     }
 }
+# Claude Code reads AGENTS.md by itself only when no CLAUDE.md-family file exists in the project folder or above it
+# (measured 2026-11-26). When one exists, a project CLAUDE.md that imports @AGENTS.md brings the role rules back.
+$agentsLoadNote = ''
+$claudeFamily = @()
+$probe = $full
+while ($probe) {
+    foreach ($n in @('CLAUDE.md', 'CLAUDE.local.md', (Join-Path '.claude' 'CLAUDE.md'))) {
+        $cand = Join-Path $probe $n
+        if (Test-Path -LiteralPath $cand -PathType Leaf) { $claudeFamily += $cand }
+    }
+    $parentDir = Split-Path -Parent $probe
+    if (-not $parentDir -or $parentDir -eq $probe) { break }
+    $probe = $parentDir
+}
+if ($claudeFamily.Count) {
+    $projClaude = Join-Path $full 'CLAUDE.md'
+    if (-not (Test-Path -LiteralPath $projClaude)) {
+        [IO.File]::WriteAllText($projClaude, "@AGENTS.md`n", $utf8)
+        $created += 'CLAUDE.md'
+        $agentsLoadNote = "created CLAUDE.md with an @AGENTS.md import (Claude Code skips AGENTS.md because of $($claudeFamily[0]))"
+    } elseif ([IO.File]::ReadAllText($projClaude) -notmatch '(?m)^\s*@AGENTS\.md\s*$') {
+        $agentsLoadNote = "WARN Claude Code will not read AGENTS.md here ($($claudeFamily[0]) exists); add a line '@AGENTS.md' to $projClaude"
+    }
+}
 if ($defNote) { Write-Output "DEFAULTS: $defNote" }
+if ($agentsLoadNote) { Write-Output "AGENTS-LOAD: $agentsLoadNote" }
 Write-Output ("CREATED: " + ($(if ($created) { $created -join ', ' } else { '-' })))
 Write-Output ("SKIPPED (already exist): " + ($(if ($skipped) { $skipped -join ', ' } else { '-' })))
 if ($updated) { Write-Output ("UPDATED (placeholders/paths refreshed): " + ($updated -join ', ')) }

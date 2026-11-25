@@ -1,0 +1,12 @@
+✔ rejects anonymous request with 401 (1.1086ms)
+✔ blocks viewer on /admin/users with 403 (0.1219ms)
+✔ allows admin on /admin/users (0.1167ms)
+✔ health check returns 200 (0.673ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 77.7697

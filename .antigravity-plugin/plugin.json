@@ -1,0 +1,7 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "agent-kit",
+  "displayName": "agent-kit",
+  "version": "0.1.0",
+  "description": "Multi-agent work harness: designer, context-free reviewer and worker roles, with three skills and a mistake guard hook."
+}

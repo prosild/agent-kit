@@ -1,0 +1,9 @@
+{
+  "name": "agent-kit",
+  "version": "0.1.0",
+  "description": "설계자·맥락 없는 검토자·작업자를 나누는 멀티 에이전트 작업 하네스의 스킬 3종과 실수 방지 훅(guard)",
+  "author": {
+    "name": "prosild"
+  },
+  "repository": "https://github.com/prosild/agent-kit"
+}

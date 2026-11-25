@@ -132,6 +132,54 @@ try {
   assert.ok(agyUn['other-plugin']);
   assert.equal(agyUn['agent-kit-guard'], undefined);
 
+  // 8. -Tools limits the run: with Claude Code installed as a plugin, only Codex and Antigravity are linked here
+  const partHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agentkit-install-part-'));
+  try {
+    const resPart = runPs1(installPs1, ['-HomeDir', partHome, '-Tools', 'codex,agy']);
+    assert.equal(resPart.status, 0, `install -Tools failed: ${resPart.stderr}\n${resPart.stdout}`);
+    assert.match(resPart.stdout, /INSTALL: OK \(path=.*, skills=6, hooks=2, guard=PASS\)/);
+    assert.ok(!fs.existsSync(path.join(partHome, '.claude', 'settings.json')), '-Tools codex,agy must not touch Claude settings');
+    assert.ok(!fs.existsSync(path.join(partHome, '.claude', 'skills')), '-Tools codex,agy must not link Claude skills');
+    assert.ok(fs.existsSync(path.join(partHome, '.agents', 'skills', 'agent-delegate', 'SKILL.md')));
+    assert.ok(JSON.parse(fs.readFileSync(path.join(partHome, '.codex', 'hooks.json'), 'utf8')).hooks.PreToolUse.length === 1);
+    assert.ok(JSON.parse(fs.readFileSync(path.join(partHome, '.gemini', 'config', 'hooks.json'), 'utf8'))['agent-kit-guard']);
+    const resBad = runPs1(installPs1, ['-HomeDir', partHome, '-Tools', 'claude,cursor']);
+    assert.notEqual(resBad.status, 0, 'unknown tool name must fail');
+    const resPartUn = runPs1(installPs1, ['-HomeDir', partHome, '-Tools', 'codex,agy', '-Uninstall']);
+    assert.equal(resPartUn.status, 0, `uninstall -Tools failed: ${resPartUn.stderr}`);
+    assert.ok(!fs.existsSync(path.join(partHome, '.agents', 'skills', 'agent-delegate')));
+  } finally {
+    fs.rmSync(partHome, { recursive: true, force: true });
+  }
+
+  // 9. Plugin manifests: one repository serves as a plugin for the three tools (each tool reads its own files)
+  const readJ = (rel) => JSON.parse(fs.readFileSync(path.join(__dirname, rel), 'utf8'));
+  const claudePlugin = readJ('.claude-plugin/plugin.json');
+  const claudeMarket = readJ('.claude-plugin/marketplace.json');
+  assert.equal(claudePlugin.name, 'agent-kit');
+  assert.ok(claudeMarket.owner && claudeMarket.owner.name, 'Claude marketplace needs owner.name');
+  assert.deepEqual(claudeMarket.plugins.map((p) => [p.name, p.source]), [['agent-kit', './']]);
+  const sharedHooks = readJ('hooks/hooks.json').hooks.PreToolUse;
+  assert.equal(sharedHooks.length, 1);
+  assert.equal(sharedHooks[0].matcher, '.*');
+  assert.equal(sharedHooks[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs"');
+  const codexPlugin = readJ('.codex-plugin/plugin.json');
+  const codexMarket = readJ('.agents/plugins/marketplace.json');
+  assert.equal(codexPlugin.name, 'agent-kit');
+  assert.equal(codexPlugin.skills, './skills/');
+  assert.equal(codexMarket.plugins[0].name, 'agent-kit');
+  assert.ok(codexMarket.plugins[0].policy.installation && codexMarket.plugins[0].category, 'Codex catalog entries need policy and category');
+  const agyPlugin = readJ('.antigravity-plugin/plugin.json');
+  const agyPluginHooks = readJ('hooks.json')['agent-kit-guard'];
+  assert.equal(agyPlugin.name, 'agent-kit');
+  assert.equal(agyPluginHooks.enabled, true);
+  assert.equal(agyPluginHooks.PreToolUse[0].hooks[0].command, 'node ./hooks/guard.mjs', 'Antigravity runs plugin hooks from the plugin root');
+  assert.equal(new Set([claudePlugin.version, codexPlugin.version, agyPlugin.version]).size, 1, 'the three manifests carry the same version');
+  for (const s of skills) {
+    const front = fs.readFileSync(path.join(__dirname, 'skills', s, 'SKILL.md'), 'utf8').split('\n').slice(0, 4).join('\n');
+    assert.match(front, new RegExp(`^name: ${s}$`, 'm'), `skill folder and name must match: ${s}`);
+  }
+
   console.log('ALL PASS');
 } finally {
   fs.rmSync(tmpHome, { recursive: true, force: true });

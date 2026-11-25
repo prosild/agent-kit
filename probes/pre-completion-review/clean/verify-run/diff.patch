@@ -1,0 +1,36 @@
+diff --git a/src/auth.js b/src/auth.js
+--- a/src/auth.js
++++ b/src/auth.js
+@@ -1,4 +1,5 @@
+ export function requireAdmin(req, res, next) {
+   if (!req.user) return res.status(401).end();
++  if (req.user.role !== 'ADMIN') return res.status(403).end();
+   return next();
+ }
+diff --git a/test/admin-guard.test.js b/test/admin-guard.test.js
+new file mode 100644
+--- /dev/null
++++ b/test/admin-guard.test.js
+@@ -0,0 +1,22 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { requireAdmin } from '../src/auth.js';
++
++function call(user) {
++  const res = { code: 0, status(c) { this.code = c; return this; }, end() { return this; } };
++  let passed = false;
++  requireAdmin({ user }, res, () => { passed = true; });
++  return { status: res.code, passed };
++}
++
++test('rejects anonymous request with 401', () => {
++  assert.deepEqual(call(undefined), { status: 401, passed: false });
++});
++
++test('blocks viewer on /admin/users with 403', () => {
++  assert.deepEqual(call({ role: 'VIEWER' }), { status: 403, passed: false });
++});
++
++test('allows admin on /admin/users', () => {
++  assert.deepEqual(call({ role: 'ADMIN' }), { status: 0, passed: true });
++});

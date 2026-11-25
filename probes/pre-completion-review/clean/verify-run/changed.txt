@@ -1,0 +1,2 @@
+M	src/auth.js
+A	test/admin-guard.test.js

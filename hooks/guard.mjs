@@ -16,7 +16,7 @@ const SECRET_DIR = /(^|[\\/])(\.codex[\\/]auth\.json|\.aws[\\/]credentials|\.doc
 const SECRET_OK = /(\.env(\.[\w-]+)*\.(example|sample|template|defaults|dist|schema|md|ts|js|mjs|cjs)|(^|[\\/])\.env\.(test|ci))$/i;
 // Permission & hook-bypass flags across Claude, Codex, and Antigravity (including Claude's --bare / --safe-mode / --restricted /
 // user-less --setting-sources, which all skip the user settings file where this guard is registered).
-const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|--bare\b|--safe-mode\b|--restricted\b|--setting-sources(?:[ =]+)["']?(?![^"'\s]*\buser\b)[a-z,]+|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access/i;
+const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|--bare\b|--safe-mode\b|--restricted\b|--setting-sources(?:[ =]+)["']?(?![^"'\s]*\buser\b)[a-z,]+|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access|features\.hooks\s*=\s*["']?false|--disable[ =]+["']?hooks\b|disableAllHooks\\?["'\s:=]+true/i;
 const READERS = /^(cat|type|head|tail|less|more|gc|get-content|import-csv|convertfrom-stringdata|select-string|sls|copy|copy-item|cp|scp|mv|move|move-item|ren|rename-item|curl|base64|grep|rg|findstr|awk|sed|diff|certutil|xxd|od|strings|sort|nl|tac|node|python|python3|py|powershell|pwsh)$/i;
 const MUTATORS = /^(rm|del|erase|rd|rmdir|remove-item|ri|mv|move|move-item|mi|ren|rename|rename-item|rni|new-item|ni|set-content|sc|add-content|ac|clear-content|clc|out-file|tee|tee-object|truncate|cp|copy|copy-item|cpi)$/i;
 
@@ -193,17 +193,36 @@ const PROJECT_CFG_RX = /(^|\/)(\.claude\/(settings[^/]*\.json|hooks(\/|$)|agents
 function inDir(ap, dir) { return ap === dir || ap.startsWith(dir + '/'); }
 function inKit(ap) { return inDir(ap, KIT) || inDir(ap, KIT_REAL); }
 
-function protectedWrite(cwd, p, keepsGuard, isDirDeleteOrMove = false) {
+// `cwd` is the session folder (who is asking); `base` is where a relative path resolves after `cd`-like commands
+// earlier in the same command line (defaults to the session folder).
+function protectedWrite(cwd, p, keepsGuard, isDirDeleteOrMove = false, base = cwd) {
   const np = norm(p);
   if (!np) return null;
-  const ap = absPath(cwd, np);
-  const rp = realAbsPath(cwd, np);
+  const ap = absPath(base, np);
+  const rp = realAbsPath(base, np);
   const inKitCwd = inKit(absPath(cwd, '.')) || inKit(realAbsPath(cwd, '.'));
+  const inWorktree = /[\\/]\.worktrees([\\/]|$)/i.test(cwd);
   const isWorkerOrSub = () => {
-    if (/[\\/]\.worktrees([\\/]|$)/i.test(cwd)) return true;
+    if (inWorktree) return true;
     const caller = callerInfo();
     return !!(caller.isWorker || caller.subStem);
   };
+  // Review reports are written by the review session only: a worker (the reviewed side) never writes one, and a
+  // sub-session never writes another review's report.
+  const rev = /\/handoff\/((?:sub|agy)-[a-z0-9_.-]+-review-\d+)(?:-report\.md|\/\1-report\.md)$/.exec(ap);
+  if (rev) {
+    const caller = callerInfo();
+    if (caller.subStem ? caller.subStem !== rev[1] : (inWorktree || caller.isWorker)) {
+      return `검토 보고서 직접 작성 (${p}). 검토 보고는 그 검토 세션만 쓴다`;
+    }
+  }
+  // Designer-owned instruction and memory files at a kit project root (the folder that holds agent-roles/ and
+  // SESSION_HANDOFF.md): every later session loads them, so workers and sub-sessions never write them.
+  const rawAbs = resolve(base || process.cwd(), np);
+  const own = /^(.*)[\\/](?:AGENTS\.md|SPEC\.md|SESSION_HANDOFF\.md)$/i.exec(rawAbs) || /^(.*)[\\/]agent-roles[\\/][^\\/]+$/i.exec(rawAbs);
+  if (own && existsSync(join(own[1], 'agent-roles')) && existsSync(join(own[1], 'SESSION_HANDOFF.md')) && isWorkerOrSub()) {
+    return `작업자·하위 세션에서 설계자 소유 지침 파일 변경 (${p}). AGENTS.md·SPEC.md·SESSION_HANDOFF.md·agent-roles/는 설계자만 고친다`;
+  }
   if (/(^|\/)\.git\/(hooks(\/|$)|config$)/.test(ap) || /(^|\/)\.git\/(hooks(\/|$)|config$)/.test(rp)) {
     return `Git 훅·설정 파일 변경 (${p}). pre-push 훅은 init.ps1이 설치한다`;
   }
@@ -450,15 +469,16 @@ function hcGetTerminal(target) {
 
 function hcTargetInfo(target) {
   const t = hcGetTerminal(target);
-  if (!t) return { provider: 'unknown', parent: '' };
+  if (!t) return { provider: 'unknown', parent: '', status: '' };
   const parent = typeof t.parent === 'string' ? t.parent : '';
+  const status = typeof t.status?.state === 'string' ? t.status.state.toLowerCase() : '';
   const launch = Array.isArray(t.argv) ? t.argv[0] : null;
   const programs = [launch, t.foreground?.name, t.status?.app].map((name) => typeof name === 'string' ? verbOf(name) : '');
-  if (programs.some((name) => AGY_PROGRAM.test(name))) return { provider: 'agy', parent };
+  if (programs.some((name) => AGY_PROGRAM.test(name))) return { provider: 'agy', parent, status };
   if (typeof t.address === 'string' && t.state === 'live' && (programs[1] || programs[2] || (programs[0] && !WRAPPER.test(programs[0])))) {
-    return { provider: 'other', parent };
+    return { provider: 'other', parent, status };
   }
-  return { provider: 'unknown', parent };
+  return { provider: 'unknown', parent, status };
 }
 
 let callerCache;
@@ -535,6 +555,11 @@ function enforceRateLimits(actions) {
   }
   const within = (ms, pred) => events.filter((e) => e.ts >= now - ms && pred(e));
   for (const a of actions) {
+    // The same call seen twice within a moment means the guard is registered twice for this tool (plugin + install.ps1).
+    // Count it once so the second copy does not trip the spacing and repeat limits.
+    const twin = events.some((e) => e.kind === a.kind && !!e.agy === !!a.agy && (e.name || '') === (a.name || '')
+      && (e.target || '') === (a.target || '') && (e.sig || '') === (a.sig || '') && now >= e.ts && now - e.ts < 400);
+    if (twin) continue;
     if (a.kind === 'run') {
       if (a.agy) {
         const agyRuns = within(3600_000, (e) => e.kind === 'run' && e.agy);
@@ -679,7 +704,7 @@ function main() {
       view_file: ['Read', { file_path: a.Path }],
       write_file: ['Write', { file_path: a.Path, content: a.Content }],
       edit_file: ['Edit', { file_path: a.Path, old_string: a.Target, new_string: a.Replacement }],
-      run_command: ['Bash', { command: a.CommandLine }],
+      run_command: ['Bash', { command: a.CommandLine, startDir: a.Cwd }],
       grep_search: ['Grep', { path: a.SearchPath || '', glob: Array.isArray(a.Includes) ? (a.Includes[0] || '') : '' }],
       find_by_name: ['Glob', { path: a.SearchDirectory || '', pattern: a.Pattern || '' }],
     };
@@ -753,7 +778,11 @@ function main() {
       const get = (k) => { const m = new RegExp(`^agentkit\\.${k} (.*)$`, 'mi').exec(cfg); return m ? m[1].trim() : ''; };
       const sub = get('submission').toLowerCase();
       let prot = get('protectedbranches').split(',').map((s) => s.trim().replace(/^refs\/heads\//, '')).filter(Boolean);
-      if (!/^(pr|direct|local)$/.test(sub) || (sub === 'pr' && !prot.length)) prot = ['main', 'master'];
+      // A repository with no agentkit.* key at all was never set up by agent-kit: the push rules do not apply there.
+      // A kit repository without a submission mode yet (init.ps1 stores agentkit.projectRoot) keeps main/master protected.
+      const isKitRepo = /\S/.test(cfg);
+      if (!isKitRepo) prot = [];
+      else if (!/^(pr|direct|local)$/.test(sub) || (sub === 'pr' && !prot.length)) prot = ['main', 'master'];
       const crossMode = get('crossagentmode').toLowerCase();
       const p = { sub: sub || '미설정', local: sub === 'local', prot, names: prot.map(reEsc).join('|'), crossMode };
       policyCache.set(where, p);
@@ -861,10 +890,20 @@ function main() {
         const targetIndex = hcArgumentIndex(w, hcIndex + 1, /^--(if|timeout|wait|force)$/i);
         const target = norm(w[targetIndex] || '');
         const caller = callerInfo();
+        const targetInfo = (caller.isWorker || hcSub !== 'interrupt') && target ? hcTargetInfo(target) : { parent: '', status: '' };
         if (caller.isWorker) {
-          const { parent } = hcTargetInfo(target);
+          const { parent } = targetInfo;
           if (!parent || parent !== caller.id) {
             block(`작업자 세션(${caller.name})은 자기가 띄운 직계 자식 터미널 외에는 입력·제어하지 않는다 (hc ${hcSub})`);
+          }
+        }
+        // No proxy approval: a terminal waiting on a permission prompt (blocked) only takes a refusal (esc / ctrl+c)
+        // from another agent. Approving is the user's call.
+        if (hcSub !== 'interrupt' && targetInfo.status === 'blocked') {
+          const keys = w.slice(targetIndex + 1).map((k) => norm(k).toLowerCase()).filter(Boolean);
+          const refusal = hcSub === 'keys' && keys.length > 0 && keys.every((k) => /^(esc|escape|ctrl\+c)$/.test(k));
+          if (!refusal) {
+            block(`승인 대기(blocked) 중인 터미널(${target})에 입력을 대신 보내지 않는다(대리 승인). 범위를 벗어난 요청이면 hc keys ${target} esc로 거부하고, 정당한 승인이면 사용자에게 터미널 이름을 알려 직접 승인받는다`);
           }
         }
         if (hcSub === 'send' && target) {
@@ -877,10 +916,22 @@ function main() {
     }
 
     const fineSegs = expandNestedShellScripts(segments(cmd));
+    // Follow `cd`-like commands so a later relative path is checked where it will really land
+    // (`cd ~/.claude; Set-Content settings.json ...`). An unresolvable target (a variable) keeps the last known folder.
+    let base = typeof inp.startDir === 'string' && inp.startDir ? resolve(cwd, inp.startDir) : cwd;
     for (const seg of fineSegs) {
       const w = words(seg, true);
       const verb = verbOf(w[0]).toLowerCase();
       const unquotedSeg = maskQuotedText(seg);
+      if (/^(cd|chdir|set-location|sl|pushd|push-location)$/.test(verb)) {
+        const dest = w.slice(1).map((t) => norm(t)).find((t) => t && !/^-(path|literalpath|passthru|stackname)$/i.test(t) && !/^\/d$/i.test(t));
+        if (dest && dest !== '-') {
+          const home = HOME.replace(/\\/g, '/');
+          const expanded = dest.replace(/^~(?=$|[\\/])/, home)
+            .replace(/^(\$HOME|\$\{HOME\}|\$env:USERPROFILE|\$env:HOME|%USERPROFILE%)(?=$|[\\/])/i, home);
+          if (!/[$%`]/.test(expanded)) base = resolve(base, expanded);
+        }
+      }
 
       if (verb === 'hc') {
         const hcIndex = hcSubcommandIndex(w);
@@ -958,6 +1009,10 @@ function main() {
           if (isSecretPath(tok) && !(!isViewer && /\.(key|pem|p12|pfx|jks|keystore)$/i.test(norm(tok)) && !/[\\/]/.test(tok))) {
             block(`비밀 파일을 읽는 명령 (${norm(tok)})`);
           }
+          // After `cd ~/.aws`, a bare `credentials` is the secret file the directory rule names.
+          if (base !== cwd && isViewer && !norm(tok).startsWith('-') && SECRET_DIR.test(resolve(base, norm(tok)).replace(/\\/g, '/'))) {
+            block(`비밀 파일을 읽는 명령 (${norm(tok)})`);
+          }
           if ((isViewer || isCopyMove) && isTestCred(tok)) {
             block(`테스트 자격증명 파일 열람·복사 (${norm(tok)}). 테스트 도구 인자로만 쓴다`);
           }
@@ -987,14 +1042,27 @@ function main() {
         }
         const checkList = isCopy ? [...destTargets, ...(pos.length >= 2 ? pos.slice(-1) : pos)] : [...destTargets, ...pos];
         for (const tok of checkList) {
-          const why = protectedWrite(cwd, tok, false, isDeleteOrMove);
+          const why = protectedWrite(cwd, tok, false, isDeleteOrMove, base);
           if (why) block(why);
+        }
+      }
+
+      // Downloads written straight to a file (`curl -o`, `wget -O`, `Invoke-WebRequest -OutFile`).
+      if (/^(curl|wget|iwr|invoke-webrequest|irm|invoke-restmethod|start-bitstransfer)$/.test(verb)) {
+        for (let idx = 1; idx < w.length; idx++) {
+          const opt = norm(w[idx]);
+          const inline = /^(?:--output|--output-document|-OutFile|-Destination)[=:](.+)$/i.exec(opt);
+          const dest = inline ? inline[1] : (/^(-o|--output|-O|--output-document|-OutFile|-Destination)$/i.test(opt) ? w[idx + 1] : null);
+          if (dest) {
+            const why = protectedWrite(cwd, dest, false, false, base);
+            if (why) block(why);
+          }
         }
       }
 
       // Output redirection (`>`, `>>`, `1>`), excluding arrow tokens (`->`, `=>`) and masked quoted text.
       for (const m of unquotedSeg.matchAll(/(?:^|[^<>&=-])(?:\d+)?>>?\s*("[^"]+"|'[^']+'|[^\s;|&>]+)/g)) {
-        const why = protectedWrite(cwd, m[1], false, false);
+        const why = protectedWrite(cwd, m[1], false, false, base);
         if (why) block(why);
       }
 

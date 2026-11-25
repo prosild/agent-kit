@@ -11,10 +11,10 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
 | 일 | 맡기는 쪽 | 실행 방식 · 받는 쪽 (`AGENTS.md` 역할 배정 표 기준) |
 |---|---|---|
 | 빈틈 검토 (스펙·인계 파일) | 설계자 (무거운 프로젝트 설계 전체, 모든 `critical` 작업 인계) | **비대화형(헤드리스)** · 검토자(`critical` 포함 시 중요 모델, 아니면 일반 모델) |
-| 완료 전 검토 | 작업자 (`review: critical` 작업만) | **비대화형(헤드리스)** · 검토자 중요 모델 |
+| 완료 전 검토 | 작업자 (`review: critical` 작업), 설계자 (직접 구현한 `impl: designer` 작업) | **비대화형(헤드리스)** · `critical`은 검토자 중요 모델, 직접 구현 작업은 일반 모델 |
 | 조사 (대량 읽기·긴 로그 요약) | 설계자·작업자 (현재 컨텍스트로 충분하면 맡기지 않음) | 자기 도구의 내장 읽기 전용 서브에이전트 우선. 없으면 **비대화형(헤드리스)** · 조사 일반 모델 |
 | 조사 (브라우저 조작·캡처) | 설계자·작업자 | 대화형 `hc run` · Antigravity 조사 일반 모델 |
-| 구현·검증·제출 | 설계자 | 대화형 작업자 (`<agent-kit>/skills/agent-delegate/worker.md`) |
+| 구현·검증·제출 (큰 작업·`critical`·병렬 작업) | 설계자 | 대화형 작업자 (`<agent-kit>/skills/agent-delegate/worker.md`) |
 
 ## 2. 이름과 상한 규칙
 - 실행 이름(`stem`): `sub-<p>-<소문자 id>-<review|research>-<n>` (`<p>`는 `AGENTS.md`의 `hc 이름 약칭`; 소문자 영문·숫자·`-`·`_`만 사용하며 점 `.`은 쓰지 않는다).
@@ -30,6 +30,7 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
 ~~~markdown
 # <ID> <빈틈 검토|완료 전 검토|조사>
 - 목적:
+- 역할 지침(아직 읽지 않았으면 먼저 읽는다): <프로젝트 폴더>/agent-roles/REVIEWER.md
 - 읽을 것(절대경로, 우선순위 순):
 - (빈틈 검토) 사용자 요구 원문: / 스펙이 가리키는 코드 파일:
 - (완료 전 검토) 인계 파일: / 작업자 보고 파일(handoff/<ID>-report.md): / 자동 검증이면 summary.txt의 OUT 폴더 내 summary.txt·output.txt·changed.txt·test-changes.txt·diff.patch 경로와 전체 commit(worktree 작업이면 `.worktrees/<소문자 id>/` 아래 소스 경로): / 수동 검증이면 대상 HEAD 40자 해시(`git rev-parse HEAD`), 확인 방법, `handoff/<ID>/evidence/` 경로:
@@ -42,8 +43,10 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
 ## 4. 실행 명령 (단발성 헤드리스 기본)
 단발성 검토와 읽기 조사는 대화형 터미널 폴링(`hc`) 없이 **비대화형(헤드리스) 명령**으로 직접 실행해 보고 파일을 바로 받는다(`CrossAgentMode=manual` 저장소에서도 사용자가 검토 터미널을 수동 실행할 필요가 없다). 하위 세션 보호 규칙이 정확히 작동하도록 환경변수 `AGENTKIT_ROLE=<stem>`(Windows PowerShell은 앞에 `$env:AGENTKIT_ROLE='<stem>'; `, POSIX 셸은 앞에 `AGENTKIT_ROLE=<stem> `)을 반드시 함께 지정한다.
 
-- **검토 · Claude (헤드리스)**:
-  `$env:AGENTKIT_ROLE='<stem>'; claude -p --model <모델> --permission-mode dontAsk --permission-prompts none --strict-mcp-config --no-session-persistence --tools "Read,Glob,Grep,Write,Edit" --allowedTools "Read,Glob,Grep,Edit(handoff/<stem>-report.md),Edit(*handoff/<stem>-report.md)" '--' "Read handoff/<stem>.md and follow it."` (`Edit(경로)` 규칙이 Write 도구까지 덮는다)
+- **검토 · Claude (헤드리스)**: 프로젝트 폴더에서 실행한다.
+  `$env:AGENTKIT_ROLE='<stem>'; $env:CLAUDE_CODE_DISABLE_AUTO_MEMORY='1'; claude -p --model <모델> --permission-mode dontAsk --permission-prompts none --strict-mcp-config --no-session-persistence --tools "Read,Glob,Grep,Write,Edit" --allowedTools "Edit(handoff/<stem>-report.md),Edit(*handoff/<stem>-report.md)" '--' "Read handoff/<stem>.md and follow it."`
+  - `--allowedTools`에 `Read`·`Glob`·`Grep`을 넣지 않는다. 넣지 않아도 실행 폴더 안은 읽히고, 넣으면 PC 전체 읽기가 열린다. 프로젝트 폴더 밖 저장소를 읽혀야 하면 `--add-dir <경로>`를 더한다.
+  - `Edit(경로)` 규칙이 Write 도구까지 덮는다. `CLAUDE_CODE_DISABLE_AUTO_MEMORY`는 도구의 자동 메모리가 검토 세션에 들어오지 않게 한다.
 - **읽기 조사 · Claude (헤드리스)**:
   위 검토 명령의 `--tools`에 `WebSearch`를, `--allowedTools`에 `WebSearch`를 더한다(`WebFetch`는 로컬 읽기 권한과 함께 무승인으로 열지 않는다).
 - **검토 · Antigravity (헤드리스)**:

@@ -10,14 +10,14 @@
   - 인계 작성과 `verify.ps1 -Id <ID> -Prepare`를 완료한 뒤 사용자에게 실행 폴더, 환경변수(`$env:AGENTKIT_ROLE='worker'`), 도구 실행 명령과 첫 문장을 안내한다. 결과는 `handoff/<ID>-report.md`로 받는다.
 - **자동 인계(`hc run`) 공통 형식** (`<p>`는 `AGENTS.md`의 `hc 이름 약칭`, 작업 ID에 `.` 금지):
   `hc run --bg --env AGENTKIT_ROLE=worker --name task-<p>-<소문자 id> --label herdr.space=<ID> --label herdr.tab=<ID> --cwd <실행 폴더> '--' <도구 명령>`
-  - **Claude**: `claude --model <모델> --permission-mode auto --allowedTools "Bash(git *),Bash(powershell *verify.ps1*),Bash(pwsh *verify.ps1*)" '--' "Read <프로젝트 폴더>/handoff/<ID>.md and follow it."`
+  - **Claude**: `claude --model <모델> --permission-mode auto --allowedTools "Bash(git *),Bash(powershell *verify.ps1*),Bash(pwsh *verify.ps1*)" '--' "Read <프로젝트 폴더>/handoff/<ID>.md and follow it."` (worktree에서 띄울 때는 `'--'` 앞에 `--add-dir "<프로젝트 폴더>"`를 더한다. 실행 폴더 밖인 메인 폴더의 인계·지침 파일을 읽을 때 승인 창이 뜨지 않게 한다)
   - **Antigravity**: `agy --model <모델> --mode auto --sandbox --log-file "<프로젝트 폴더>/handoff/task-<p>-<소문자 id>.log" -i "Read <프로젝트 폴더>/handoff/<ID>.md and follow it."` (연속 AGY 실행 시 최소 30초 간격 준수)
   - **Codex**: `codex --no-daemon [-m <모델>] "Read <프로젝트 폴더>/handoff/<ID>.md and follow it."`
 - 실행 직후 반환된 `parent`가 `$env:HC_TERMINAL_ID`와 다르거나 `first_message.sent`가 `false`이면 즉시 멈추고 원인을 확인해 사용자에게 알린다.
 
 ## 2. 대기와 차단 처리 (대리 클릭 금지)
 - `hc wait --children any --timeout 600`으로 기다린다. timeout이면 진행 상태를 확인하고 계속 작업 중이면 다시 wait한다(연속 3회[30분] 동안 화면 변화가 없거나 `error`·한도 소진·인증 오류가 보이면 즉시 멈추고 사용자에게 알린다).
-- **대리 승인(`hc keys enter`) 금지**: 작업자가 `blocked`(폴더 신뢰 확인, 샌드박스 밖 실행, 외부 네트워크/푸시 권한 확인 등)로 멈췄을 때 `hc read task-<p>-<소문자 id> --lines 0`으로 원인을 파악하되, **설계자 AI가 `hc keys enter`로 승인 창을 대신 누르지 않는다.** 인계 범위를 벗어난 잘못된 요청이면 `hc keys task-<p>-<소문자 id> esc`로 거부한 뒤 지시를 보내고, 정당한 권한 확대·외부 작업 승인이면 사용자에게 해당 터미널 이름을 알려 직접 승인받는다.
+- **대리 승인(`hc keys enter`) 금지**: 작업자가 `blocked`(폴더 신뢰 확인, 샌드박스 밖 실행, 외부 네트워크/푸시 권한 확인 등)로 멈췄을 때 `hc read task-<p>-<소문자 id> --lines 0`으로 원인을 파악하되, **설계자 AI가 `hc keys enter`로 승인 창을 대신 누르지 않는다**(`blocked` 터미널에 보내는 승인 입력은 `guard.mjs`가 막는다). Claude의 폴더 신뢰 확인은 저장소마다 처음 한 번만 뜨고 worktree는 메인 폴더의 신뢰를 따른다. 인계 범위를 벗어난 잘못된 요청이면 `hc keys task-<p>-<소문자 id> esc`로 거부한 뒤 지시를 보내고, 정당한 권한 확대·외부 작업 승인이면 사용자에게 해당 터미널 이름을 알려 직접 승인받는다.
 - 작업자 질문 응답: `handoff/<ID>-report.md`에 질문이 올라오면 `hc send --wait task-<p>-<소문자 id> "<답>"`으로 답하고 같은 호출에서 턴 종료까지 기다린다(답 때문에 인계를 수정했으면 `-Prepare`를 다시 실행하고 `"handoff updated, read it again"`을 함께 보낸다).
 
 ## 3. 수락 뒤 제출 지시
