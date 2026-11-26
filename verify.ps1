@@ -365,9 +365,11 @@ if ($Accept) {
 
     if (-not $cmd -and $Manual) {
         $evDir = Join-Path $task 'evidence'
-        if ($needsReview -and $evAccept.list.Count -eq 0) { Fail "$(if ($isCrit) { 'critical' } else { 'designer-implemented' }) manual acceptance requires evidence files under handoff/$Id/evidence" }
+        # A manual acceptance has no command run behind it, so the evidence files are the only record of what was checked.
+        if ($evAccept.list.Count -eq 0) { Fail "manual acceptance requires evidence files under handoff/$Id/evidence (what was checked and what it showed)" }
         $reviewInfo = Validate-ReviewReport $ReviewReport $head $needsReview '' $evDir
         $diffCheck = @(Read-Git @('diff', "$($approved.baseCommit)...HEAD"))
+        if ($diffCheck.Count -eq 0) { Fail 'empty diff (nothing was committed since the base commit)' }
         $specHashNow = Spec-Hash
         $manualRec = [ordered]@{
             kind='accept'; manual=$true; result='PASS'; commit=$head; approval=$approved.approval
@@ -377,6 +379,7 @@ if ($Accept) {
         }
         Write-Json $acceptedPath $manualRec
         Write-Output "COMMIT: $head"; Write-Output "DIFF-LINES: $($diffCheck.Count)"
+        Write-Output "EVIDENCE: $($evAccept.list.Count) file(s)$(if ($evAccept.stale.Count) { "; WARN $($evAccept.stale.Count) file(s) older than HEAD commit ($($evAccept.stale -join ', '))" } else { ' (all current)' })"
         Write-Output 'RESULT: PASS (manual acceptance recorded)'; exit 0
     }
 
@@ -447,14 +450,24 @@ $names = @(Read-Git @('diff', '--name-status', "$($approved.baseCommit)...HEAD")
 Save 'changed.txt' $names
 
 # Test modification / weakening signals (covers separator paths, CamelCase *Tests.cs/*.java/*.kt, Rust #[cfg(test)], Go t.Fatal, pytest.skip, etc.)
-$allTestFiles = @($names | Where-Object {
-    $_ -match '(?i)(^|[/\\\t._"-])(tests?|specs?|__tests__)([/\\._"-]|$)' -or
-    $_ -cmatch '[A-Za-z0-9](Tests?|Specs?)\.(cs|java|kt|kts|scala|swift|go|rs|py|rb|php|[cm]?[jt]sx?)"?$'
-})
+$testPathRx = '(?i)(^|[/\\\t._"-])(tests?|specs?|__tests__)([/\\._"-]|$)'
+$testNameRx = '[A-Za-z0-9](Tests?|Specs?)\.(cs|java|kt|kts|scala|swift|go|rs|py|rb|php|[cm]?[jt]sx?)"?$'
+$allTestFiles = @($names | Where-Object { $_ -match $testPathRx -or $_ -cmatch $testNameRx })
 $addedTests = @($allTestFiles | Where-Object { $_ -match '^A\t' })
 $testChanges = @($allTestFiles | Where-Object { $_ -notmatch '^A\t' })
-$skipChanges = @($diff | Where-Object { $_ -match '^\+(?!\+\+).*(\.skip\b|\.only\b|\.todo\b|\b(xit|xdescribe|fit|fdescribe)\s*\(|@unittest\.skip|\bpytest\.(mark\.(skip|xfail)|skip\s*\()|\bassume(True|False|That)\s*\(|@Disabled\b|@Ignore\b|#\[ignore\]|\bt\.Skip(f|Now)?\b|\bskip\s*:\s*true\b)' })
-$removedAsserts = @($diff | Where-Object { $_ -match '^-(?!--).*\b(assert\w*|expect\s*\(|should\w*|t\.(Error|Fatal|Fail)\w*|fail\s*\()\b' })
+# Skip and removed-assertion signals count only inside test files (and Rust sources, whose tests live inline): a deleted
+# "should ..." sentence in a document or a `.skip` property in ordinary code is not a weakened test.
+$skipRx = '^\+(?!\+\+).*(\.skip\b|\.only\b|\.todo\b|\b(xit|xdescribe|fit|fdescribe)\s*\(|@unittest\.skip|\bpytest\.(mark\.(skip|xfail)|skip\s*\()|\bassume(True|False|That)\s*\(|@Disabled\b|@Ignore\b|#\[ignore\]|\bt\.Skip(f|Now)?\b|\bskip\s*:\s*true\b)'
+$assertRx = '^-(?!--).*\b(assert\w*|expect\s*\(|should\w*|t\.(Error|Fatal|Fail)\w*|fail\s*\()\b'
+$skipChanges = @(); $removedAsserts = @(); $inTestFile = $false
+foreach ($line in $diff) {
+    if ($line.StartsWith('diff --git ')) {
+        $inTestFile = ($line -match $testPathRx) -or ($line -cmatch $testNameRx) -or ($line -match '\.rs"?$')
+        continue
+    }
+    if (-not $inTestFile) { continue }
+    if ($line -match $skipRx) { $skipChanges += $line } elseif ($line -match $assertRx) { $removedAsserts += $line }
+}
 $rustInlineTestEdit = @($diff | Where-Object { $_ -match '^[+-](?![+-]{2}).*(#\[cfg\(test\)\]|#\[test\])' })
 $signals = @($testChanges) + @($skipChanges) + @($removedAsserts) + @($rustInlineTestEdit)
 $testReport = @()
@@ -481,7 +494,8 @@ try {
 $finished = (Get-Date).ToString('o')
 
 # Detect build-cache replays and 0-test runs without false-failing multi-target Rust (`cargo test` doc-tests = 0 when unit tests ran).
-$outLines = @(@($raw) | ForEach-Object { "$_" })
+# Colour codes are stripped for matching only (Nx prints them even when its output is piped); output.txt keeps the raw text.
+$outLines = @(@($raw) | ForEach-Object { "$_" -replace '\x1b\[[0-9;?]*[A-Za-z]', '' })
 $skipped = @($outLines | Where-Object { $_ -match '^> Task (\S*:)?(\w*[Tt]est|check) (UP-TO-DATE|FROM-CACHE|SKIPPED|NO-SOURCE)\s*$' })
 $totals = @($outLines | Where-Object { $_ -match '^\d+ actionable tasks?: ' })
 if (-not $skipped.Count -and $totals.Count -and -not @($totals | Where-Object { $_ -match '\bexecuted\b' }).Count) { $skipped = $totals }
@@ -501,11 +515,22 @@ if (-not $skipped.Count) {
 if (-not $skipped.Count) {
     $noTests = @($outLines | Where-Object {
         $_ -notmatch '^\s*(PASS|FAIL)\s+' -and (
-            $_ -match '(Tests are skipped|No tests? (files? )?found|collected 0 items|^(#|ℹ)\s*(tests|pass)\s+0\s*$|Tests run:\s*0,|Total tests:\s*0\b|\[existing outputs match the cache\]|>>> FULL TURBO)' -or
-            ($_ -match '^=+\s*\d+\s+skipped\b.*=+$' -and $_ -notmatch '\b[1-9]\d*\s+passed\b')
+            $_ -match '(Tests are skipped|No tests? (files? )?found|collected 0 items|^(#|ℹ)\s*(tests|pass)\s+0\s*$|Tests run:\s*0,|Total tests:\s*0\b|>>> FULL TURBO)' -or
+            ($_ -match '^=+\s*\d+\s+skipped\b.*=+$' -and $_ -notmatch '\b[1-9]\d*\s+passed\b') -or
+            # Vitest summary when every test was skipped or is a todo: "Tests  2 skipped (2)" (a run with passes starts with "N passed").
+            ($_ -match '^\s*Tests\s+\d+\s+(skipped|todo)\b' -and $_ -notmatch '\bpassed\b')
         )
     })
     if ($noTests.Count) { $skipped = $noTests }
+}
+if (-not $skipped.Count -and @($outLines | Where-Object { $_ -match '^\s*NX\s' }).Count) {
+    # Nx: every task was answered from the cache ("Cache: 2/2 hit (100%)" in the default output style, plus
+    # "Nx read the output from the cache ... for 2 out of 2 tasks" in the static style). A partly cached run did run something.
+    $nxAllCached = @($outLines | Where-Object {
+        ($_ -match '^\s*Cache:\s+(\d+)/(\d+) hit\b' -or $_ -match '^Nx read the output from the cache instead of running the command for (\d+) out of (\d+) tasks') -and
+        $Matches[1] -eq $Matches[2] -and [int]$Matches[2] -gt 0
+    })
+    if ($nxAllCached.Count) { $skipped = $nxAllCached }
 }
 
 $after = State; $afterHead = Head

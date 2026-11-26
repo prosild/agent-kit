@@ -15,7 +15,7 @@
    - **이종 에이전트 교차 배치**: Codex·Claude Code·Antigravity 중 원하는 도구를 역할별로 자유롭게 조합하며, `AGENTS.md` 표 한 곳만 고치면 역할을 즉시 교체할 수 있다(3사 모두 `AGENTS.md`를 자동 로드한다. Claude는 프로젝트 폴더나 그 상위에 `CLAUDE.md` 계열 파일이 있으면 `AGENTS.md`를 읽지 않으므로, 그때는 `init.ps1`이 `@AGENTS.md`를 가져오는 `CLAUDE.md`를 만들어 준다).
 2. **말이 아닌 실행 근거로 잠그는 경량 결정론적 검증 (`verify.ps1` + `hooks/pre-push`)**
    - 설계자가 착수 전 `verify.ps1 -Prepare`로 인계 해시·`SPEC.md` 해시·비교 기준 커밋을 고정한다.
-   - 빌드 캐시 재생(Gradle `UP-TO-DATE`/`SKIPPED`, Go `(cached)`/`[no test files]`, Turborepo/Nx 캐시), 테스트 0건 실행, 미추적 파일·더티 트리를 모두 실패로 잡아내며, 기존 테스트 삭제·skip·단언 약화 신호(`test-changes.txt`)와 명령 실패 시 줄 번호가 붙은 핵심 에러 발췌(`FAILURE-EXCERPT`)를 자동 추출한다.
+   - 빌드 캐시 재생(Gradle `UP-TO-DATE`/`SKIPPED`, Go `(cached)`/`[no test files]`, Turborepo/Nx 캐시), 테스트 0건 실행, 미추적 파일·더티 트리를 실패로 처리하며(캐시·0건은 출력 문구로 판정한다. 확인된 도구는 RUNBOOK 1절), 기존 테스트 삭제·skip·단언 약화 신호(`test-changes.txt`)와 명령 실패 시 줄 번호가 붙은 핵심 에러 발췌(`FAILURE-EXCERPT`)를 자동 추출한다.
    - 설계자의 `verify.ps1 -Accept`는 무거운 테스트를 중복 재실행하지 않고 작업자가 남긴 실행 증거(`run.json`)·인계 해시·클린 트리를 즉시 대조해 로컬 수락 기록(`accepted.json`)을 남기며(`critical` 작업과 설계자가 직접 구현한 작업은 검토 보고서의 판정·`검토 commit`·`검증 경로`(`OUT`) 일치까지 필수 검증, 수동 검증 Git 작업은 `-Accept -Manual`), 커밋 해시가 일치하지 않으면 `pre-push` 훅과 `-CheckAccepted`가 제출을 차단한다.
 3. **3사 에이전트 공통 실수 방지 가드레일 (`hooks/guard.mjs`)**
    - Claude Code·Codex·Antigravity 공통 `PreToolUse` 훅으로 비밀 파일(`.env`, SSH 키·인증서, 클라우드 자격증명, 테스트 쿠키) 열람, 보호 브랜치 직접 push 및 `--no-verify` 우회, 훅·권한 우회 플래그, 하위 세션·작업자의 역할 경계 이탈, 호출 폭주·무한 루프를 실시간 차단한다.
@@ -24,8 +24,9 @@
    - 매번 읽는 파일(`AGENTS.md` + 역할 파일 1개)에는 구조화된 핵심 행동 규칙만 두고, 세부 운영 절차(`RUNBOOK.md`)·위임 스킬(`skills/`)·실패 회고(`EXPERIENCE.md`)는 필요할 때만 읽는 On-demand로 분리한다.
 
 ## 요구 환경 및 초기 설정 (최초 1회)
-- **요구 환경**: Windows (Windows PowerShell 5.1+ 또는 `pwsh`), macOS·Linux (`pwsh` PowerShell 7+, `/bin/sh`), Git, Node.js 18+, 사용할 에이전트 CLI(Codex / Claude Code / Antigravity 중 1개 이상), 선택 사항으로 대화형 작업자 세션 오케스트레이션용 **Herdr(`hc`)**.
-  - 실행 확인(2026-11-26): 회귀 테스트 6종이 Windows(Windows PowerShell 5.1)와 Linux(Debian 12, PowerShell 7.6, Node 22)에서 통과한다. macOS와 Linux에서의 실제 에이전트 CLI 세션은 실행해 확인하지 못했다.
+- **요구 환경**: Windows (Windows PowerShell 5.1+ 또는 `pwsh`), Linux (`pwsh` PowerShell 7+, `/bin/sh`), Git, Node.js 18+, 사용할 에이전트 CLI(Codex / Claude Code / Antigravity 중 1개 이상), 선택 사항으로 대화형 작업자 세션 오케스트레이션용 **Herdr(`hc`)**.
+  - 실행 확인(2026-11-26): 회귀 테스트 6종이 Windows(Windows PowerShell 5.1)와 Linux(Debian 12, PowerShell 7.6, Node 22)에서 통과한다. Linux에서 실제 에이전트 CLI 세션을 띄워 보지는 못했다.
+  - macOS는 지원 환경이 아니다. Linux와 같은 코드 경로를 타지만 실행해 확인한 적이 없다.
 1. 저장소를 **공백이나 셸 특수문자(`& ; | < > ( ) ' " [ ]`)가 없는 중앙 경로 한 곳**(`<agent-kit>`, 예: `C:/Users/<user>/agent-kit` 또는 `~/agent-kit`)에 클론한다(작업할 개별 프로젝트 폴더 안에 클론하지 않는다).
 2. **등록**: 스킬 3종(`agent-kit-start`, `agent-delegate`, `agent-session-cleanup`)과 실수 방지 훅(`guard.mjs`)을 쓰는 도구에 등록한다. 한 도구에는 아래 방법 중 하나만 쓴다(둘 다 쓰면 가드가 호출마다 두 번 돈다).
    - **Claude Code — 플러그인(권장)**:
@@ -36,7 +37,7 @@
      로컬 경로 마켓플레이스는 복사 없이 `<agent-kit>` 폴더를 그대로 읽으므로 `git pull`만 하면 최신이 된다. 스킬 이름에는 `agent-kit:agent-delegate`처럼 플러그인 이름이 붙는다. 해제는 `claude plugin uninstall agent-kit`. 열려 있던 세션은 다시 시작해야 플러그인 훅이 걸린다.
    - **Codex · Antigravity — `install.ps1 -Tools codex,agy`**(훅 동작을 확인한 경로):
      - Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File <agent-kit>/install.ps1 -Tools codex,agy`
-     - macOS·Linux: `pwsh -NoProfile -File <agent-kit>/install.ps1 -Tools codex,agy`
+     - Linux: `pwsh -NoProfile -File <agent-kit>/install.ps1 -Tools codex,agy`
      - 스킬은 정션/심볼릭 링크(Codex `~/.agents/skills`)와 Antigravity `~/.gemini/config/skills.json`으로, 훅은 전역 `hooks.json`에 등록한다. `<agent-kit>`을 그대로 가리키므로 `git pull`만 하면 최신이다. 해제는 같은 명령에 `-Uninstall`.
      - Codex는 새로 생겼거나 바뀐 훅을 사용자가 `/hooks`에서 신뢰해야 실행한다. 설치 뒤 Codex에서 `/hooks`를 한 번 확인한다.
    - `-Tools`를 빼면 세 도구를 모두 `install.ps1`로 등록한다(Claude도 정션과 `~/.claude/settings.json` 훅으로 등록).
@@ -65,7 +66,7 @@
 - **기존 프로젝트 재개**: 프로젝트 폴더에서 설계자를 시작하고 `"SPEC.md와 SESSION_HANDOFF.md를 읽고 이어서 진행하자"`라고 입력한다. 키트 폴더 경로를 옮긴 뒤에는 `init.ps1 -Target <프로젝트 폴더>`를 한 번 실행하면 기존 지침 파일 안의 옛 키트 경로와 미치환 토큰이 자동으로 갱신된다.
 - **예외로 멈췄을 때**:
   - **한도 소진 / 모델 교체**: `AGENTS.md` 역할 배정 표의 모델만 바꾸고 새 세션에서 `"SPEC.md와 SESSION_HANDOFF.md를 읽고 이어서 진행하자"`로 재개한다.
-  - **연속 실행 간격·호출 상한 차단(`guard.mjs`)**: AGY 연속 실행 30초 간격 또는 `hc` 무한 루프 상한에 걸리면 원인과 대상 터미널 화면(`hc read`)을 확인한 뒤 재개한다(이력은 Windows `%LOCALAPPDATA%/agent-kit/hc-rate.json`, macOS·Linux `~/.cache/agent-kit/hc-rate.json`에 최근 60분만 보관).
+  - **연속 실행 간격·호출 상한 차단(`guard.mjs`)**: AGY 연속 실행 30초 간격 또는 `hc` 무한 루프 상한에 걸리면 원인과 대상 터미널 화면(`hc read`)을 확인한 뒤 재개한다(이력은 Windows `%LOCALAPPDATA%/agent-kit/hc-rate.json`, Linux `~/.cache/agent-kit/hc-rate.json`에 최근 60분만 보관).
   - **권한 확대 승인 창 / 훅 차단**: 설계자가 알린 대상 터미널에서 사용자가 직접 승인·거부하거나 원인을 해결한 뒤 이어서 진행하라고 알린다.
 
 ## 구성
@@ -95,7 +96,7 @@
 부속 도구(세션과 디스크를 정리할 때 쓴다): `cleanup.ps1`, `skills/agent-session-cleanup`.
 
 ## CLI 일괄 업데이트 (`update-tools.ps1`, `update-tools.sh`)
-Windows와 WSL 한 배포판의 `codex`·`claude`·`agy` CLI를 각 도구의 `update` 명령으로 올린다. Windows 전용이다(macOS·Linux에서 실행하면 안내만 하고 종료 코드 2로 끝난다).
+Windows와 WSL 한 배포판의 `codex`·`claude`·`agy` CLI를 각 도구의 `update` 명령으로 올린다. Windows 전용이다(Linux에서 실행하면 안내만 하고 종료 코드 2로 끝난다).
 ```powershell
 $s = '<agent-kit>/update-tools.ps1'
 powershell -NoProfile -ExecutionPolicy Bypass -File $s                        # 미리보기
@@ -103,7 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $s -Apply                 # 
 powershell -NoProfile -ExecutionPolicy Bypass -File $s -Apply -WindowsOnly    # Windows만
 powershell -NoProfile -ExecutionPolicy Bypass -File $s -Distro Ubuntu         # 대상 배포판 지정
 ```
-- 테스트: `node update-tools.test.mjs` (Windows는 모의 실행 파일만 쓰며, 호스트에 WSL `Ubuntu`가 있으면 `/tmp/updtest-*` 격리 폴더에서 `update-tools.sh`도 함께 시험한다. macOS·Linux에서는 안내만 하고 끝나는지만 확인한다).
+- 테스트: `node update-tools.test.mjs` (Windows는 모의 실행 파일만 쓰며, 호스트에 WSL `Ubuntu`가 있으면 `/tmp/updtest-*` 격리 폴더에서 `update-tools.sh`도 함께 시험한다. Linux에서는 안내만 하고 끝나는지만 확인한다).
 
 ## 고칠 때
 - **배치 위치와 중복 먼저 확인(원칙 1·3)**: 새 규칙은 먼저 필요할 때만 읽는 곳(`RUNBOOK.md`·`skills/`·스크립트·훅)에 둘 수 있는지 본다. 항상 읽는 지침(`templates/AGENTS.md`·역할 파일)에 넣어야 할 때는 중복·낡은 문장을 함께 덜어낸다.

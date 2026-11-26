@@ -41,7 +41,7 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
 - 작업 파일에는 경로와 사실만 주고 검토 질문, 통과 서술(`PASS`·`문제없음`), 기대 판정을 쓰지 않는다.
 
 ## 4. 실행 명령 (단발성 헤드리스 기본)
-단발성 검토와 읽기 조사는 대화형 터미널 폴링(`hc`) 없이 **비대화형(헤드리스) 명령**으로 직접 실행해 보고 파일을 바로 받는다(`CrossAgentMode=manual` 저장소에서도 사용자가 검토 터미널을 수동 실행할 필요가 없다). 하위 세션 보호 규칙이 정확히 작동하도록 환경변수 `AGENTKIT_ROLE=<stem>`을 반드시 함께 지정한다. 아래 명령의 앞머리(`$env:이름='값'; `)는 PowerShell 형식이다. `sh`·`bash`(macOS·Linux, Windows의 Git Bash·Bash 도구)에서는 앞머리만 `이름=값 `으로 바꿔 명령 바로 앞에 붙인다(그대로 넣으면 변수 없이 실행된다).
+단발성 검토와 읽기 조사는 대화형 터미널 폴링(`hc`) 없이 **비대화형(헤드리스) 명령**으로 직접 실행해 보고 파일을 바로 받는다(`CrossAgentMode=manual` 저장소에서도 사용자가 검토 터미널을 수동 실행할 필요가 없다). 하위 세션 보호 규칙이 정확히 작동하도록 환경변수 `AGENTKIT_ROLE=<stem>`을 반드시 함께 지정한다. 아래 명령의 앞머리(`$env:이름='값'; `)는 PowerShell 형식이다. `sh`·`bash`(Linux, Windows의 Git Bash·Bash 도구)에서는 앞머리만 `이름=값 `으로 바꿔 명령 바로 앞에 붙인다(그대로 넣으면 변수 없이 실행된다).
 
 - **검토 · Claude (헤드리스)**: 프로젝트 폴더에서 실행한다.
   `$env:AGENTKIT_ROLE='<stem>'; $env:CLAUDE_CODE_DISABLE_AUTO_MEMORY='1'; claude -p --model <모델> --permission-mode dontAsk --permission-prompts none --strict-mcp-config --no-session-persistence --tools "Read,Glob,Grep,Write,Edit" --allowedTools "Edit(handoff/<stem>-report.md),Edit(*handoff/<stem>-report.md)" '--' "Read handoff/<stem>.md and follow it."`
@@ -58,7 +58,7 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
 - **검토 · Codex (헤드리스)**:
   `handoff/<stem>/` 폴더를 먼저 만들고 보고 경로를 `handoff/<stem>/<stem>-report.md`로 지정한 뒤 실행한다(비터미널 파이프에서 `codex exec`가 표준 입력 EOF를 기다리며 멈추지 않게 하고, 공백 포함 경로에서도 설정 인자가 깨지지 않도록 아래 형식을 지킨다):
   - Windows PowerShell(5.1은 인자 안의 큰따옴표를 지우므로 TOML 작은따옴표를 쓴다): `$env:AGENTKIT_ROLE='<stem>'; $null | codex exec --ephemeral [-m <모델>] -c default_permissions=cell_review -c "permissions.cell_review.filesystem={':root'='read','<프로젝트 폴더>/handoff/<stem>'='write'}" -c permissions.cell_review.network.enabled=false -c web_search=disabled "Read handoff/<stem>.md and follow it."`
-  - macOS·Linux (`sh`/`bash`): `AGENTKIT_ROLE=<stem> codex exec --ephemeral [-m <모델>] -c default_permissions=cell_review -c 'permissions.cell_review.filesystem={":root"="read","<프로젝트 폴더>/handoff/<stem>"="write"}' -c permissions.cell_review.network.enabled=false -c web_search=disabled "Read handoff/<stem>.md and follow it." < /dev/null`
+  - Linux (`sh`/`bash`): `AGENTKIT_ROLE=<stem> codex exec --ephemeral [-m <모델>] -c default_permissions=cell_review -c 'permissions.cell_review.filesystem={":root"="read","<프로젝트 폴더>/handoff/<stem>"="write"}' -c permissions.cell_review.network.enabled=false -c web_search=disabled "Read handoff/<stem>.md and follow it." < /dev/null`
 - **브라우저 대화형 조사 · Antigravity (`hc run` 전용)**:
   외부 웹 브라우저 조작·캡처가 꼭 필요할 때만 `handoff/<stem>/settings.json`(프로젝트·`<stem>` 폴더 읽기/쓰기 및 필요한 브라우저 MCP만 명시 허용)을 준비하고 `hc run --bg --no-notify --env AGENTKIT_ROLE=<stem> --name <stem> --cwd <프로젝트 폴더> '--' agy --model <모델> --mode plan --sandbox --settings "<프로젝트 폴더>/handoff/<stem>/settings.json" --log-file "<프로젝트 폴더>/handoff/<stem>.log" -i "Read <프로젝트 폴더>/handoff/<stem>.md and follow it."`로 실행한다(`manual` 모드면 사용자에게 실행 요청).
 

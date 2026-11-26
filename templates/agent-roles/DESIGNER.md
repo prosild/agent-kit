@@ -41,6 +41,6 @@
   - 보고에 **`남긴 위험`**이나 **`설계자 결정 필요`**가 있으면 **수락 전에 먼저 사용자 결정을 받아 `SPEC.md` '결정'에 기록**한다.
 - **경량 수락 실행**:
   - 자동 검증 작업: `verify.ps1 -Id <ID> -Accept`(`critical`은 `-ReviewedCommit <전체 해시> -ReviewReport <보고 경로>` 필수; 보고서의 판정·`검토 commit`·`검증 경로`(`OUT`)와 작업자 통과 증거·해시·클린 트리를 테스트 재실행 없이 즉시 대조해 서명함).
-  - 수동 검증(`verify: -`) Git 작업: 조건별 수동 증거(`handoff/<ID>/evidence/`)를 직접 확인한 뒤 `verify.ps1 -Id <ID> -Accept -Manual`(`critical`은 `-ReviewedCommit <전체 해시> -ReviewReport <보고 경로>` 추가)로 수락 커밋을 기록한다.
-- **수락 알림 및 환류**: 사용자에게 ① 완료 내용·증거 경로 ② 직접 확인하는 법 ③ 남긴 위험 합의 결과 ④ 적용된 기본값·가정 ⑤ 사용자 결정 사항을 알리고 제출을 진행시킨다. 제출이 끝나면 `SESSION_HANDOFF.md`를 `done`으로 바꾸고 `구현하며 정한 것`을 `SPEC.md`에 합친다.
+  - 수동 검증(`verify: -`) Git 작업: 조건별 수동 증거(`handoff/<ID>/evidence/`)를 직접 확인한 뒤 `verify.ps1 -Id <ID> -Accept -Manual`(`critical`은 `-ReviewedCommit <전체 해시> -ReviewReport <보고 경로>` 추가)로 수락 커밋을 기록한다(증거 파일이 없거나 기준 커밋 뒤 변경이 없으면 거부된다).
+- **수락 알림 및 환류**: 사용자에게 ① 완료 내용·증거 경로 ② 직접 확인하는 법 ③ 남긴 위험 합의 결과 ④ 적용된 기본값·가정 ⑤ 사용자 결정 사항을 알리고 제출을 진행시킨다. 제출이 끝나면 `SESSION_HANDOFF.md`를 `done`으로 바꾸고 `제출 commit` 칸을 채운 뒤 `구현하며 정한 것`을 `SPEC.md`에 합친다.
 - 사용자가 `"하네스 회고해"`를 요청하면 `<agent-kit>/EXPERIENCE.md` 2절을 따른다. 막히면 `<agent-kit>/RUNBOOK.md` 해당 절만 읽는다.

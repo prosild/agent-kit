@@ -5,7 +5,7 @@ description: "사용자가 세션·대화 기록·캐시·디스크 용량·끝�
 
 # 에이전트 세션 정리
 
-스크립트: `<agent-kit>/cleanup.ps1` (Windows는 `powershell -NoProfile -ExecutionPolicy Bypass -File`, macOS·Linux는 `pwsh -NoProfile -File`; 출력은 영어, 보고는 한국어)
+스크립트: `<agent-kit>/cleanup.ps1` (Windows는 `powershell -NoProfile -ExecutionPolicy Bypass -File`, Linux는 `pwsh -NoProfile -File`; 출력은 영어, 보고는 한국어)
 
 ## 0. 이 세션의 하위 세션만 지우기 ("하위 세션 정리해", "네가 띄운 세션 지워")
 이 세션이 `hc`로 띄운 자식(작업자·대화형 조사 등)의 끝난 터미널·대화 기록·임시/로그 파일을 정리한다. 요청 자체가 승인이다.
@@ -27,7 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File <agent-kit>/cleanup.ps1 [-Da
 ```
 - `GROUP SUMMARY`를 표(그룹·개수·크기·수정일 범위·번호 범위)로 보고한다.
 - 그룹: `claude`(Claude 대화 기록), `codex`(Codex 세션 기록), `agy`(Antigravity CLI·App·IDE 대화+산출물), `agy-temp`(캐시·로그·임시 파일), `hc`(끝난 `hc` 터미널 — 기간 무관).
-- 지우면 해당 대화를 재개할 수 없으며, 기본 동작은 휴지통(Windows Recycle Bin / macOS·Linux Trash) 이동임을 함께 안내한다.
+- 지우면 해당 대화를 재개할 수 없으며, 기본 동작은 휴지통(Windows Recycle Bin / Linux Trash) 이동임을 함께 안내한다.
 
 ## 2. 사용자 승인
 - 지울 그룹이나 번호 범위를 사용자에게 물어 명시적으로 선택한 항목만 다음 단계로 넘긴다.

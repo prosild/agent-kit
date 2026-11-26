@@ -154,13 +154,40 @@ handoff('CARGOZERO', nodePrint(['running 0 tests', 'test result: ok. 0 passed; 0
 fail('Rust cargo test: 모든 타겟이 running 0 tests면 FAIL',run('CARGOZERO'),'build cache');
 handoff('NOTESTS','echo No tests found, exiting with code 0'); prepare('NOTESTS');
 fail('테스트 0건(No tests found) 출력은 PASS가 아님',run('NOTESTS'),'build cache');
+// The lines below are copied from real runs (Vitest 5.1.2, Nx 24.0.7, Turborepo 2.11.13) made the way verify.ps1 runs
+// a check: through the shell with piped output. Nx prints colour codes even then.
+const NXTAG = '\x1b[7m\x1b[1m\x1b[32m NX \x1b[39m\x1b[22m\x1b[27m  ';
+handoff('VITESTSKIP', nodePrint([' Test Files  1 skipped (1)', '      Tests  2 skipped (2)'])); prepare('VITESTSKIP');
+fail('Vitest 전원 skipped 요약은 PASS가 아님',run('VITESTSKIP'),'build cache');
+handoff('VITESTTODO', nodePrint([' Test Files  1 skipped (1)', '      Tests  1 todo (1)'])); prepare('VITESTTODO');
+fail('Vitest 전원 todo 요약은 PASS가 아님',run('VITESTTODO'),'build cache');
+handoff('VITESTMIXED', nodePrint([' Test Files  1 passed | 1 skipped (2)', '      Tests  1 passed | 1 skipped (2)'])); prepare('VITESTMIXED');
+pass('Vitest: 통과한 테스트가 있으면 skipped가 섞여도 PASS',run('VITESTMIXED'));
+handoff('NXCACHED', nodePrint([NXTAG + '\x1b[32m2 tasks: 2 succeeded, 2 cached\x1b[39m', '  Cache:             2/2 hit (100%)'])); prepare('NXCACHED');
+fail('Nx 기본 출력: 모든 태스크가 캐시 적중이면 PASS가 아님',run('NXCACHED'),'build cache');
+handoff('NXSTATIC', nodePrint(['> nx run app:test  [existing outputs match the cache, left as is]', NXTAG + '\x1b[32mSuccessfully ran target \x1b[1mtest\x1b[22m for project app\x1b[39m', '\x1b[2mNx read the output from the cache instead of running the command for 1 out of 1 tasks.\x1b[22m'])); prepare('NXSTATIC');
+fail('Nx static 출력: 색상 코드가 붙은 "1 out of 1 tasks" 줄도 잡음',run('NXSTATIC'),'build cache');
+handoff('NXPARTIAL', nodePrint([NXTAG + '\x1b[32m2 tasks: 2 succeeded, 1 cached\x1b[39m', '  Cache:             1/2 hit (50%)'])); prepare('NXPARTIAL');
+pass('Nx: 일부만 캐시 적중이고 실행된 태스크가 있으면 PASS',run('NXPARTIAL'));
+handoff('TURBO', nodePrint(['app:test: cache hit, replaying logs 9218e2b162169591', ' Tasks:    1 successful, 1 total', 'Cached:    1 cached, 1 total', '  Time:    48ms >>> FULL TURBO'])); prepare('TURBO');
+fail('Turborepo 전체 캐시 재생(FULL TURBO)은 PASS가 아님',run('TURBO'),'build cache');
 
 // Manual Git task (`verify: -`) prepare + `-Accept -Manual` + `-CheckAccepted` (prevents direct push deadlock)
 writeFileSync(join(P,'handoff/MAN.md'),'---\nid: MAN\nreview: normal\nverify: -\n---\n## manual goal\n');
 pass('수동 Git 작업(verify: -)도 -Prepare로 기준 고정 가능',prepare('MAN'));
 check('수동 Git 작업의 일반 실행은 여전히 NONE code3',run('MAN').code===3);
-pass('수동 Git 작업의 -Accept -Manual 수락 기록 생성',run('MAN',{mode:'Accept',manual:true}));
+fail('수동 수락: 증거 파일이 없으면 normal 등급도 거부',run('MAN',{mode:'Accept',manual:true}),'requires evidence files');
+check('거부된 수동 수락은 accepted.json을 만들지 않음',!existsSync(join(P,'handoff','MAN','accepted.json')));
+mkdirSync(join(P,'handoff','MAN','evidence'),{recursive:true});
+writeFileSync(join(P,'handoff','MAN','evidence','checked.txt'),'opened the page, the date shows as 2026-11-13\n');
+r=run('MAN',{mode:'Accept',manual:true}); pass('수동 Git 작업의 -Accept -Manual 수락 기록 생성(증거 있음)',r);
+check('수동 수락 출력에 증거 수와 오래됨 여부 표시',r.field('EVIDENCE')==='1 file(s) (all current)',r.out);
 pass('수동 Git 작업 수락 후 -CheckAccepted 통과',run('MAN',{mode:'CheckAccepted'}));
+writeFileSync(join(P,'handoff/MANEMPTY.md'),'---\nid: MANEMPTY\nreview: normal\nverify: -\n---\n## manual goal\n');
+prepare('MANEMPTY',{base:'HEAD'});
+mkdirSync(join(P,'handoff','MANEMPTY','evidence'),{recursive:true});
+writeFileSync(join(P,'handoff','MANEMPTY','evidence','checked.txt'),'looked\n');
+fail('수동 수락: 기준 커밋 뒤 변경이 없으면(빈 diff) 거부',run('MANEMPTY',{mode:'Accept',manual:true}),'empty diff');
 
 writeFileSync(join(P,'dirty.txt'),'source');
 fail('미추적 소스 있으면 실패',run('T01'),'uncommitted');
@@ -237,6 +264,24 @@ writeFileSync(join(P,'MyApp.UnitTests','AuthTests.cs'),'// modified camelcase te
 git(['add','-A']); git(['commit','-q','-m','test signal']);
 r=run('SIGNALS2'); pass('테스트 변경 신호는 자동 실패 아님',r);
 check('기존 테스트 수정(CamelCase AuthTests.cs 포함)·skip·assert 삭제 신호 보존',Number.parseInt(r.field('TEST-CHANGES'))>=5 && /AuthTests\.cs/.test(read('SIGNALS2','test-changes.txt')) && /clean\.test\.js/.test(read('SIGNALS2','test-changes.txt')) && /test\.skip/.test(read('SIGNALS2','test-changes.txt')),r.out+'\n'+read('SIGNALS2','test-changes.txt'));
+// Signals count only inside test files: a deleted "should" sentence in a document and a `.skip` property in ordinary
+// code are not weakened tests. Rust sources keep the check because their tests live in the same file.
+mkdirSync(join(P,'docs'),{recursive:true}); mkdirSync(join(P,'src'),{recursive:true});
+writeFileSync(join(P,'docs','guide.md'),'Run the build.\nYou should assert the output by hand.\nThe list should stay sorted.\n');
+writeFileSync(join(P,'src','pager.js'),'export const pager = { size: 10 };\n');
+writeFileSync(join(P,'src','lib.rs'),'pub fn add(a: i32, b: i32) -> i32 { a + b }\n// checked below\n    assert_eq!(add(1, 2), 3);\n');
+git(['add','-A']); git(['commit','-q','-m','docs and sources']);
+handoff('SIGNALS3'); prepare('SIGNALS3',{base:'HEAD'});
+writeFileSync(join(P,'docs','guide.md'),'Run the build.\n');
+writeFileSync(join(P,'src','pager.js'),'export const pager = { size: 10 };\npager.skip = 20; pager.only = true;\n');
+git(['add','-A']); git(['commit','-q','-m','reword docs, add pager fields']);
+r=run('SIGNALS3'); pass('문서·일반 코드만 바꾼 작업도 PASS',r);
+check('문서에서 지운 should 문장과 일반 코드의 .skip·.only 속성은 신호가 아님(TEST-CHANGES 0)',r.field('TEST-CHANGES').startsWith('0'),r.out+'\n'+read('SIGNALS3','test-changes.txt'));
+handoff('SIGNALS4'); prepare('SIGNALS4',{base:'HEAD'});
+writeFileSync(join(P,'src','lib.rs'),'pub fn add(a: i32, b: i32) -> i32 { a + b }\n// checked below\n');
+git(['add','-A']); git(['commit','-q','-m','drop inline assertion']);
+r=run('SIGNALS4');
+check('Rust 소스 안의 단언 삭제는 계속 신호로 셈',Number.parseInt(r.field('TEST-CHANGES'))===1 && /assert_eq!/.test(read('SIGNALS4','test-changes.txt')),r.out+'\n'+read('SIGNALS4','test-changes.txt'));
 
 // SPEC hash, CRLF tolerance, manual evidence, -Accept non-destructive failure, and -ReviewReport whitelist check.
 writeFileSync(join(P,'.git','info','exclude'),'/SPEC.md\n');

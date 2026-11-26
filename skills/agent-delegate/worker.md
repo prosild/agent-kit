@@ -22,4 +22,4 @@
 
 ## 3. 수락 뒤 제출 지시
 - 설계자가 `verify.ps1 -Id <ID> -Accept`(수동 검증 Git 작업은 `-Accept -Manual`) 통과를 확인한 뒤 `hc send --wait task-<p>-<소문자 id> "accepted <commit 또는 산출물 해시>, submit per SPEC"`을 보낸다(사용자가 직접 PR을 merge하는 방식이면 제출 직전 `-CheckAccepted` 대조까지만 지시).
-- `handoff/<ID>-report.md`에서 제출 완료 보고(`<ID> submitted ...`)를 확인한 뒤 `SESSION_HANDOFF.md`를 `done`으로 갱신한다. 끝난 작업자 터미널은 사용자가 `"하위 세션 정리해"`라고 요청할 때 정리한다.
+- `handoff/<ID>-report.md`에서 제출 완료 보고(`<ID> submitted ...`)를 확인한 뒤 `SESSION_HANDOFF.md`를 `done`으로 갱신하고 `제출 commit` 칸에 그 commit을 적는다. 끝난 작업자 터미널은 사용자가 `"하위 세션 정리해"`라고 요청할 때 정리한다.

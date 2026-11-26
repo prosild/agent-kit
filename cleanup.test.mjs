@@ -91,7 +91,7 @@ const cases = [
     return x.r.status === 0 && !x.fileLeft;
   }],
   // The Windows Recycle Bin cannot be pointed at a test folder, so the trash move is only exercised off Windows.
-  ...(IS_WIN ? [] : [['휴지통 이동(macOS·Linux 실행): files/<이름>과 원래 경로를 담은 info/<이름>.trashinfo를 함께 만든다', () => {
+  ...(IS_WIN ? [] : [['휴지통 이동(Windows 밖에서만 실행):files/<이름>과 원래 경로를 담은 info/<이름>.trashinfo를 함께 만든다', () => {
     const home = join(TMP, 'trash-home'); mkdirSync(home);
     const x = run({ seq: [DONE], groups: 'files', trashHome: home });
     const base = join(home, '.local', 'share', 'Trash');

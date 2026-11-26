@@ -2,7 +2,7 @@
 
 ## 시작
 - 인계 파일(`handoff/<ID>.md`)의 목표·인수 조건·가정(기본값)·하지 않을 것·`review`·`verify`와 가리키는 `SPEC.md` 절을 읽는다. 인계 범위 밖 파일 수정이나 불필요한 리팩터링은 하지 않는다.
-- `deps`가 있으면 `SESSION_HANDOFF.md`에서 선행 작업이 `done`이고 제출 commit이 base에 포함되어 있는지(`git merge-base --is-ancestor <선행 commit> <base>`) 확인한다.
+- `deps`가 있으면 `SESSION_HANDOFF.md`에서 선행 작업이 `done`이고 그 줄의 `제출 commit`이 base에 포함되어 있는지(`git merge-base --is-ancestor <선행 commit> <base>`) 확인한다. 칸이 없거나 비어 있으면 짐작하지 말고 설계자에게 보고한다.
 - 재개: 이미 `handoff/<ID>-report.md`나 작업 브랜치가 있으면 이전 상태부터 잇는다. 이미 설계자 수락(`accepted …`)을 받은 상태면 기본 `verify.ps1`을 다시 돌리지 말고(기본 실행은 수락을 지운다) 9단계(`-CheckAccepted`)부터 진행한다.
 - 저장소에 제출 정책(`git config --local agentkit.submission`)이 비어 있으면 `init.ps1 -GitSetup -Target <저장소 루트>`를 한 번 실행해보고, 정책 미설정이면 스스로 정하지 말고 설계자에게 보고한다. 지침 파일(`AGENTS.md`·`SPEC.md`·`SESSION_HANDOFF.md`·`agent-roles/`)과 `handoff/`는 인계가 지시하지 않는 한 `git add`하지 않는다.
 - 인계가 모호하거나 그대로 구현하면 안 되는 결함을 찾으면 추측하지 말고 `handoff/<ID>-report.md`에 질문을 적고 턴을 끝낸다.
@@ -12,7 +12,7 @@
 2. 구현과 단위/통합 테스트 작성(버그 수정과 핵심 로직은 실패 테스트 확인 후 구현).
 3. 정적 검사(Lint·타입)·자동 테스트 실행.
 4. 작업 브랜치(`task/<소문자 id>`)에 논리 단위로 커밋(기준 커밋은 `handoff/<ID>/approved.json`의 `baseCommit`).
-5. 고정 검증 실행: `powershell -NoProfile -ExecutionPolicy Bypass -File <agent-kit>/verify.ps1 -Id <ID>` (macOS·Linux는 `pwsh -NoProfile -File ...`; worktree/하위 저장소는 `-Project <프로젝트 폴더> -Repo <저장소·worktree>` 추가).
+5. 고정 검증 실행: `powershell -NoProfile -ExecutionPolicy Bypass -File <agent-kit>/verify.ps1 -Id <ID>` (Linux는 `pwsh -NoProfile -File ...`; worktree/하위 저장소는 `-Project <프로젝트 폴더> -Repo <저장소·worktree>` 추가).
    - 자동 명령이 있으면 `RESULT: PASS`가 나올 때까지 고쳐 커밋하고 다시 돌린다. 단, **원인이 같은 실패가 2회 연속 나거나 `max verify failures`에 도달하면 즉시 멈추고** 코드 문제인지 인계·환경 문제인지 관찰 근거를 보고한다(RUNBOOK 15절).
    - 작업자는 인계·`approved.json`·`accepted.json`을 수정하거나 `-Prepare`·`-Accept`를 실행하지 않는다.
    - 수동 검증 조건과 `verify: -` 작업은 확인 방법·증거를 `handoff/<ID>/evidence/`에 남긴다(실제 대상 vs 모의 환경 명시).

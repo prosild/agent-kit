@@ -5,7 +5,7 @@ verify: -
 ---
 <!-- id: 영문·숫자·'-'·'_'만 사용('.'은 hc --name에서 거부되므로 쓰지 않는다).
      review: normal | critical. 보안·권한·데이터 무결성(DB 마이그레이션)·외부 계약/배포 작업과 사용자가 검토를 요청한 작업이면 critical.
-     verify: 파일을 수정하지 않는 자동 검사 명령 한 줄(Windows는 cmd, macOS·Linux는 /bin/sh 기준; 예: npm run lint && npm test). 명령이 없거나 비Git이면 -와 수동 증거를 쓴다. 캐시로 건너뛰는 빌드 도구는 재실행 플래그(예: --rerun-tasks)를 포함한다.
+     verify: 파일을 수정하지 않는 자동 검사 명령 한 줄(Windows는 cmd, Linux는 /bin/sh 기준; 예: npm run lint && npm test). 명령이 없거나 비Git이면 -와 수동 증거를 쓴다. 캐시로 건너뛰는 빌드 도구는 재실행 플래그(예: --rerun-tasks)를 포함한다.
      impl: 설계자가 직접 구현하는 작은 일반 작업이면 머리말에 `impl: designer`를 더한다(수락에 맥락 없는 검토 보고가 필요해진다. critical에는 쓸 수 없다).
      선택 머리말: base: <비교 ref> / deps: [T01] / worktree: <저장소 루트>/.worktrees/<소문자 id> <브랜치> (병렬 작업, RUNBOOK 5절). -->
 > 작업자는 이 파일이 있는 프로젝트 폴더의 `AGENTS.md`와 `agent-roles/WORKER.md`를 아직 읽지 않았으면 먼저 읽는다(이 파일 기준 `../AGENTS.md`, `../agent-roles/WORKER.md`).
