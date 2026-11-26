@@ -41,10 +41,11 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
 - 작업 파일에는 경로와 사실만 주고 검토 질문, 통과 서술(`PASS`·`문제없음`), 기대 판정을 쓰지 않는다.
 
 ## 4. 실행 명령 (단발성 헤드리스 기본)
-단발성 검토와 읽기 조사는 대화형 터미널 폴링(`hc`) 없이 **비대화형(헤드리스) 명령**으로 직접 실행해 보고 파일을 바로 받는다(`CrossAgentMode=manual` 저장소에서도 사용자가 검토 터미널을 수동 실행할 필요가 없다). 하위 세션 보호 규칙이 정확히 작동하도록 환경변수 `AGENTKIT_ROLE=<stem>`(Windows PowerShell은 앞에 `$env:AGENTKIT_ROLE='<stem>'; `, POSIX 셸은 앞에 `AGENTKIT_ROLE=<stem> `)을 반드시 함께 지정한다.
+단발성 검토와 읽기 조사는 대화형 터미널 폴링(`hc`) 없이 **비대화형(헤드리스) 명령**으로 직접 실행해 보고 파일을 바로 받는다(`CrossAgentMode=manual` 저장소에서도 사용자가 검토 터미널을 수동 실행할 필요가 없다). 하위 세션 보호 규칙이 정확히 작동하도록 환경변수 `AGENTKIT_ROLE=<stem>`을 반드시 함께 지정한다. 아래 명령의 앞머리(`$env:이름='값'; `)는 PowerShell 형식이다. `sh`·`bash`(macOS·Linux, Windows의 Git Bash·Bash 도구)에서는 앞머리만 `이름=값 `으로 바꿔 명령 바로 앞에 붙인다(그대로 넣으면 변수 없이 실행된다).
 
 - **검토 · Claude (헤드리스)**: 프로젝트 폴더에서 실행한다.
   `$env:AGENTKIT_ROLE='<stem>'; $env:CLAUDE_CODE_DISABLE_AUTO_MEMORY='1'; claude -p --model <모델> --permission-mode dontAsk --permission-prompts none --strict-mcp-config --no-session-persistence --tools "Read,Glob,Grep,Write,Edit" --allowedTools "Edit(handoff/<stem>-report.md),Edit(*handoff/<stem>-report.md)" '--' "Read handoff/<stem>.md and follow it."`
+  - `sh`·`bash` 앞머리: `AGENTKIT_ROLE=<stem> CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude -p ...`(뒤 인자는 같다).
   - `--allowedTools`에 `Read`·`Glob`·`Grep`을 넣지 않는다. 넣지 않아도 실행 폴더 안은 읽히고, 넣으면 PC 전체 읽기가 열린다. 프로젝트 폴더 밖 저장소를 읽혀야 하면 `--add-dir <경로>`를 더한다.
   - `Edit(경로)` 규칙이 Write 도구까지 덮는다. `CLAUDE_CODE_DISABLE_AUTO_MEMORY`는 도구의 자동 메모리가 검토 세션에 들어오지 않게 한다.
 - **읽기 조사 · Claude (헤드리스)**:
@@ -53,7 +54,7 @@ description: "설계자나 작업자가 다른 세션에 일을 맡길 때 쓴�
   1. 먼저 `handoff/<stem>/settings.json`을 UTF-8(BOM 없음)로 쓴다(전역 `read_file(*)` 금지 — 프로젝트와 역할 지침 경로만 허용):
      `{"permissions":{"allow":["read_file(<프로젝트 폴더>)","read_file(<agent-kit>/templates/agent-roles)","write_file(<프로젝트 폴더>/handoff/<stem>-report.md)"],"deny":["command(*)","mcp(*)","read_url(*)","execute_url(*)"]}}`
   2. 실행(연속 AGY 실행 시 최소 30초 간격 준수; `-p`는 바로 뒤 인자를 프롬프트로 받으므로 맨 끝에 둔다):
-     `$env:AGENTKIT_ROLE='<stem>'; agy --model <모델> --mode plan --sandbox --disable-slash-commands --settings "<프로젝트 폴더>/handoff/<stem>/settings.json" -p "Read <프로젝트 폴더>/handoff/<stem>.md and follow it."`
+     `$env:AGENTKIT_ROLE='<stem>'; agy --model <모델> --mode plan --sandbox --disable-slash-commands --settings "<프로젝트 폴더>/handoff/<stem>/settings.json" -p "Read <프로젝트 폴더>/handoff/<stem>.md and follow it."` (`sh`·`bash` 앞머리: `AGENTKIT_ROLE=<stem> agy ...`)
 - **검토 · Codex (헤드리스)**:
   `handoff/<stem>/` 폴더를 먼저 만들고 보고 경로를 `handoff/<stem>/<stem>-report.md`로 지정한 뒤 실행한다(비터미널 파이프에서 `codex exec`가 표준 입력 EOF를 기다리며 멈추지 않게 하고, 공백 포함 경로에서도 설정 인자가 깨지지 않도록 아래 형식을 지킨다):
   - Windows PowerShell(5.1은 인자 안의 큰따옴표를 지우므로 TOML 작은따옴표를 쓴다): `$env:AGENTKIT_ROLE='<stem>'; $null | codex exec --ephemeral [-m <모델>] -c default_permissions=cell_review -c "permissions.cell_review.filesystem={':root'='read','<프로젝트 폴더>/handoff/<stem>'='write'}" -c permissions.cell_review.network.enabled=false -c web_search=disabled "Read handoff/<stem>.md and follow it."`

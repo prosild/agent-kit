@@ -1,0 +1,4 @@
+# Shell scripts keep LF on every checkout: WSL bash and POSIX sh cannot run a CRLF file,
+# and Git for Windows converts text files to CRLF by default (core.autocrlf=true).
+*.sh text eol=lf
+hooks/pre-push text eol=lf

@@ -430,10 +430,18 @@ function Remove-One([string]$p) {
     else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, $ui, $rc) }
     return
   }
-  $trash = if (Test-Path -LiteralPath (Join-Path $H '.Trash')) { Join-Path $H '.Trash' } else { [IO.Path]::Combine($H, '.local', 'share', 'Trash', 'files') }
-  if (-not (Test-Path -LiteralPath $trash)) { New-Item -ItemType Directory -Path $trash -Force | Out-Null }
-  $dest = Join-Path $trash ("$(Split-Path $p -Leaf)-$([guid]::NewGuid().ToString('N').Substring(0,8))")
-  Move-Item -LiteralPath $p -Destination $dest -Force
+  $leaf = "$(Split-Path $p -Leaf)-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+  $macTrash = Join-Path $H '.Trash'
+  if (Test-Path -LiteralPath $macTrash) { Move-Item -LiteralPath $p -Destination (Join-Path $macTrash $leaf) -Force; return }
+  # freedesktop.org Trash (Linux): files/<name> needs info/<name>.trashinfo written first, or file managers cannot restore it.
+  $base = if ($env:XDG_DATA_HOME -and [IO.Path]::IsPathRooted($env:XDG_DATA_HOME)) { Join-Path $env:XDG_DATA_HOME 'Trash' } else { [IO.Path]::Combine($H, '.local', 'share', 'Trash') }
+  $files = Join-Path $base 'files'; $info = Join-Path $base 'info'
+  foreach ($d in $files, $info) { if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null } }
+  $escaped = (([IO.Path]::GetFullPath($p) -split '/') | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
+  $infoFile = Join-Path $info "$leaf.trashinfo"
+  [IO.File]::WriteAllText($infoFile, "[Trash Info]`nPath=$escaped`nDeletionDate=$((Get-Date).ToString('yyyy-MM-ddTHH:mm:ss'))`n", (New-Object System.Text.UTF8Encoding($false)))
+  try { Move-Item -LiteralPath $p -Destination (Join-Path $files $leaf) -Force }
+  catch { Remove-Item -LiteralPath $infoFile -Force -ErrorAction SilentlyContinue; throw }
 }
 
 function Get-TerminalState([string]$hc, [string]$addr) {

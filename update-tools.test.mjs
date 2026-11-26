@@ -21,6 +21,15 @@ process.on('exit', () => {
 let bad = 0, total = 0;
 function check(name, ok, detail = '') { total++; if (!ok) bad++; console.log((ok ? 'PASS' : 'FAIL') + '  ' + name + (ok ? '' : '\n' + detail)); }
 
+// Off Windows the script has nothing to update. The only thing to test there is that it says so and stops.
+if (process.platform !== 'win32') {
+  const p = spawnSync('pwsh', ['-NoProfile', '-File', PS1, '-Apply'], { encoding: 'utf8' });
+  const out = (p.stdout || '') + (p.stderr || '');
+  check('Windows 밖: 안내만 하고 종료 코드 2, 도구를 찾거나 실행하지 않음', p.status === 2 && /Windows only/.test(out) && !/READY|FAIL|SKIP|UPDATED/.test(out), `${p.status}\n${out}`);
+  console.log(`\n${total - bad}/${total} passed (the Windows and WSL checks were not run on ${process.platform})`);
+  process.exit(bad ? 1 : 0);
+}
+
 // ---- mock .exe: --version prints <name>.ver (fails silently with <name>.verfail; prints but exits 4 with <name>.verexit);
 // update logs to calls.log, fails with exit 3 if <name>.fail exists, otherwise copies <name>.next into <name>.ver
 // and, with <name>.verexitafter, makes later --version calls exit 4.

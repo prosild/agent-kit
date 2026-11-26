@@ -25,6 +25,7 @@
 
 ## 요구 환경 및 초기 설정 (최초 1회)
 - **요구 환경**: Windows (Windows PowerShell 5.1+ 또는 `pwsh`), macOS·Linux (`pwsh` PowerShell 7+, `/bin/sh`), Git, Node.js 18+, 사용할 에이전트 CLI(Codex / Claude Code / Antigravity 중 1개 이상), 선택 사항으로 대화형 작업자 세션 오케스트레이션용 **Herdr(`hc`)**.
+  - 실행 확인(2026-11-26): 회귀 테스트 6종이 Windows(Windows PowerShell 5.1)와 Linux(Debian 12, PowerShell 7.6, Node 22)에서 통과한다. macOS와 Linux에서의 실제 에이전트 CLI 세션은 실행해 확인하지 못했다.
 1. 저장소를 **공백이나 셸 특수문자(`& ; | < > ( ) ' " [ ]`)가 없는 중앙 경로 한 곳**(`<agent-kit>`, 예: `C:/Users/<user>/agent-kit` 또는 `~/agent-kit`)에 클론한다(작업할 개별 프로젝트 폴더 안에 클론하지 않는다).
 2. **등록**: 스킬 3종(`agent-kit-start`, `agent-delegate`, `agent-session-cleanup`)과 실수 방지 훅(`guard.mjs`)을 쓰는 도구에 등록한다. 한 도구에는 아래 방법 중 하나만 쓴다(둘 다 쓰면 가드가 호출마다 두 번 돈다).
    - **Claude Code — 플러그인(권장)**:
@@ -94,7 +95,7 @@
 부속 도구(세션과 디스크를 정리할 때 쓴다): `cleanup.ps1`, `skills/agent-session-cleanup`.
 
 ## CLI 일괄 업데이트 (`update-tools.ps1`, `update-tools.sh`)
-Windows와 WSL 한 배포판의 `codex`·`claude`·`agy` CLI를 각 도구의 `update` 명령으로 올린다.
+Windows와 WSL 한 배포판의 `codex`·`claude`·`agy` CLI를 각 도구의 `update` 명령으로 올린다. Windows 전용이다(macOS·Linux에서 실행하면 안내만 하고 종료 코드 2로 끝난다).
 ```powershell
 $s = '<agent-kit>/update-tools.ps1'
 powershell -NoProfile -ExecutionPolicy Bypass -File $s                        # 미리보기
@@ -102,7 +103,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $s -Apply                 # 
 powershell -NoProfile -ExecutionPolicy Bypass -File $s -Apply -WindowsOnly    # Windows만
 powershell -NoProfile -ExecutionPolicy Bypass -File $s -Distro Ubuntu         # 대상 배포판 지정
 ```
-- 테스트: `node update-tools.test.mjs` (Windows는 모의 실행 파일만 쓰며, 호스트에 WSL `Ubuntu`가 있으면 `/tmp/updtest-*` 격리 폴더에서 `update-tools.sh`도 함께 시험한다).
+- 테스트: `node update-tools.test.mjs` (Windows는 모의 실행 파일만 쓰며, 호스트에 WSL `Ubuntu`가 있으면 `/tmp/updtest-*` 격리 폴더에서 `update-tools.sh`도 함께 시험한다. macOS·Linux에서는 안내만 하고 끝나는지만 확인한다).
 
 ## 고칠 때
 - **배치 위치와 중복 먼저 확인(원칙 1·3)**: 새 규칙은 먼저 필요할 때만 읽는 곳(`RUNBOOK.md`·`skills/`·스크립트·훅)에 둘 수 있는지 본다. 항상 읽는 지침(`templates/AGENTS.md`·역할 파일)에 넣어야 할 때는 중복·낡은 문장을 함께 덜어낸다.

@@ -1,6 +1,6 @@
 // Regression test for cleanup.ps1 (sub-session mode B + whole-machine mode A + cross-platform paths).
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync, chmodSync, utimesSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, mkdirSync, existsSync, chmodSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,8 @@ else if (cmd === 'rm' && existsSync(D + '/rmfail')) process.exit(1);
 const DONE = '{"state":"live","status":{"state":"done"}}', WORKING = '{"state":"live","status":{"state":"working"}}';
 
 let n = 0;
-function run({ seq, groups = 'files,hc', git = null, rmfail = false }) {
+// trashHome: move to the trash under this home folder instead of deleting (-Permanent is the default here).
+function run({ seq, groups = 'files,hc', git = null, rmfail = false, trashHome = null }) {
   const dir = join(TMP, `case${++n}`), proj = join(dir, 'proj'), mock = join(dir, 'mock');
   mkdirSync(join(proj, 'handoff'), { recursive: true }); mkdirSync(mock);
   if (git === 'broken') writeFileSync(join(proj, '.git'), 'gitdir: C:/agentkit-no-such-gitdir\n');
@@ -46,10 +47,10 @@ function run({ seq, groups = 'files,hc', git = null, rmfail = false }) {
     { Id: 2, Group: 'hc', Label: 't9 agy sub-t01-review-1 [LIVE status=done]', Paths: [], Hc: 't9', Explicit: true, Root: null, Bytes: 0, Newest: '' },
   ] }));
   const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'),
-    '-Parent', 't0', '-Manifest', manifest, '-Apply', '-Permanent', '-Groups', groups], {
-    encoding: 'utf8', env: { ...process.env, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, LOCALAPPDATA: join(dir, 'localapp') } });
+    '-Parent', 't0', '-Manifest', manifest, '-Apply', ...(trashHome ? [] : ['-Permanent']), '-Groups', groups], {
+    encoding: 'utf8', env: { ...process.env, ...(trashHome ? { HOME: trashHome, XDG_DATA_HOME: '' } : {}), PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, LOCALAPPDATA: join(dir, 'localapp') } });
   const calls = existsSync(join(mock, 'calls.txt')) ? readFileSync(join(mock, 'calls.txt'), 'utf8') : '';
-  return { r, out: r.stdout + r.stderr, fileLeft: existsSync(file), calls };
+  return { r, out: r.stdout + r.stderr, fileLeft: existsSync(file), calls, file };
 }
 
 const cases = [
@@ -89,6 +90,16 @@ const cases = [
     const x = run({ seq: [DONE], groups: 'files', git: 'ok' });
     return x.r.status === 0 && !x.fileLeft;
   }],
+  // The Windows Recycle Bin cannot be pointed at a test folder, so the trash move is only exercised off Windows.
+  ...(IS_WIN ? [] : [['휴지통 이동(macOS·Linux 실행): files/<이름>과 원래 경로를 담은 info/<이름>.trashinfo를 함께 만든다', () => {
+    const home = join(TMP, 'trash-home'); mkdirSync(home);
+    const x = run({ seq: [DONE], groups: 'files', trashHome: home });
+    const base = join(home, '.local', 'share', 'Trash');
+    const moved = existsSync(join(base, 'files')) ? readdirSync(join(base, 'files')) : [];
+    const infoFile = moved.length === 1 ? join(base, 'info', moved[0] + '.trashinfo') : '';
+    const m = /^\[Trash Info\]\nPath=(.+)\nDeletionDate=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\n$/.exec(infoFile && existsSync(infoFile) ? readFileSync(infoFile, 'utf8') : '');
+    return x.r.status === 0 && !x.fileLeft && /moved to Trash/.test(x.out) && !!m && decodeURIComponent(m[1]) === x.file;
+  }]]),
   ['A2: 하위 세션 목록 뒤 -Parent 없이 -Apply → PC 전체 목록을 적용하지 않음', () => {
     const t = join(TMP, 'tempA2'), d = join(t, 'agent-cleanup'); mkdirSync(d, { recursive: true });
     const victim = join(TMP, 'a2-victim.txt'); writeFileSync(victim, 'x');

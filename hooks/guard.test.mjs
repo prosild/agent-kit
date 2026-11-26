@@ -528,6 +528,14 @@ const mockHc = `data:text/javascript,${encodeURIComponent(`
   syncBuiltinESMExports();
 `)}`;
 let bad = 0;
+// The cases use Windows drive paths (C:/p). Off Windows such a path is not absolute: it resolves under the folder this
+// test runs in (the kit), so the guard takes a plain project session for a kit maintenance session. There the same
+// paths are sent as POSIX absolute paths (/c/p). Backslash paths and URLs are left as they are.
+const IS_WIN = process.platform === 'win32';
+const posix = (v) => typeof v === 'string' ? v.replace(/(?<![A-Za-z])([A-Za-z]):\/(?!\/)/g, (_, d) => `/${d.toLowerCase()}/`)
+  : Array.isArray(v) ? v.map(posix)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, posix(x)])) : v;
+const payload = (ev) => JSON.stringify(IS_WIN ? ev : posix(ev));
 function runGuard(ev, { callerId = 'test-caller', rateFile = 'off', nowMs = '', roleEnvOverride, hcLog = '' } = {}) {
   const isManualWorker = callerId === 'manual-worker';
   const isManualSub = callerId === 'manual-sub';
@@ -536,7 +544,7 @@ function runGuard(ev, { callerId = 'test-caller', rateFile = 'off', nowMs = '', 
   const env = { ...process.env, AGENT_GUARD_TEST: '1', GIT_CONFIG_GLOBAL: GLOBAL, HC_TERMINAL_ID: hcId, AGENTKIT_ROLE: roleEnv, AGENTKIT_RATE_FILE: rateFile };
   if (nowMs) env.AGENTKIT_NOW_MS = String(nowMs);
   if (hcLog) env.AGENTKIT_TEST_HC_LOG = hcLog;
-  const r = spawnSync('node', ['--import', mockHc, GUARD], { input: JSON.stringify(ev), env });
+  const r = spawnSync('node', ['--import', mockHc, GUARD], { input: payload(ev), env });
   const pre = ev.hook_event_name === 'PreToolUse' && !ev.toolCall;
   let got = r.status === 2 ? (pre ? 'EXIT2' : 'BLOCK') : r.status === 0 ? 'ALLOW' : 'ERR' + r.status;
   const out = r.stdout ? r.stdout.toString().trim() : '';

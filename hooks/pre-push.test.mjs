@@ -1,6 +1,6 @@
 // Regression test for hooks/pre-push and init.ps1 (submission policy, TrackSpec, moved-path refresh, sub-repo projectRoot).
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +46,7 @@ const OLD = mk('old');
 sh('git branch develop', DEV); git(['push', '-q', 'origin', 'develop'], DEV); sh('git remote set-head origin develop', DEV);
 sh('git branch develop', DIRECT);
 writeFileSync(hookOf(OLD), readFileSync(join(KIT, 'hooks', 'pre-push'), 'utf8'));
+if (!IS_WIN) chmodSync(hookOf(OLD), 0o755);   // Git skips a hook file that is not executable; init.ps1 sets this bit when it installs the hook
 sh(`git init -q -b main "${TMP}/fresh"`);
 sh(`git init -q -b main "${TMP}/fresh2"`);
 sh(`git init -q -b main "${TMP}/husky"`); sh('git config core.hooksPath .husky', `${TMP}/husky`);

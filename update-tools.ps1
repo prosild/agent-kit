@@ -9,6 +9,12 @@
 # The WSL half is update-tools.sh. CLI only, not the desktop apps. Version compatibility checks are check-tools.ps1.
 param([switch]$Apply, [ValidateNotNullOrEmpty()][string]$Distro = 'Ubuntu', [switch]$WindowsOnly)
 
+# This script only knows Windows .exe installs and wsl.exe. Elsewhere it would report every tool as a broken install.
+if ($env:OS -ne 'Windows_NT') {
+    Write-Output 'update-tools.ps1 runs on Windows only (it updates the Windows installs and one WSL distro). On macOS or Linux run each tool''s own update command, for example "claude update".'
+    exit 2
+}
+
 # The shortcut uses -NoProfile. Decode native CLI/WSL output as UTF-8 even
 # when this console starts with the Korean legacy code page (949).
 # These settings affect this process/console only, not Git or saved profiles.
