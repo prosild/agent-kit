@@ -27,7 +27,7 @@
 - 화면은 정체 근거(blocked·error, done인데 보고 없음, 명시적 오류)가 있을 때와 timeout 확인 때만 `hc read <터미널 이름·주소> --lines 0`으로 한 번 읽는다. **상위 AI가 화면을 읽고 `hc keys <대상> enter`로 승인 창을 대리 클릭하지 않는다**(권한 확대 승인 창은 사용자에게 알린다).
 
 ## 3. hc 보고·전송·이름 규칙
-- `hc run --name`은 소문자 영문·숫자·`-`·`_` 1~32자만 받는다(점 `.`과 대문자는 거부된다). 이름은 PC 전체에서 유일해야 하므로 프로젝트 약칭 `<p>`와 소문자 작업 ID를 넣는다: 작업자 `task-<p>-<id>`, 대화형 조사 `sub-<p>-<id>-research-<n>`. `<p>`는 `AGENTS.md`의 `hc 이름 약칭`이다(`init.ps1`이 자동 생성).
+- `hc run --name`은 소문자 영문·숫자·`-`·`_` 1~32자만 받는다(점 `.`과 대문자는 거부된다). 이름은 PC 전체에서 유일해야 하므로 프로젝트 약칭 `<p>`와 소문자 작업 ID를 넣는다: 작업자 `task-<p>-<id>`, 대화형 조사 `sub-<p>-<id>-research-<n>`. `<p>`는 `AGENTS.md`의 `hc 이름 약칭`이다(`init.ps1`이 자동 생성). `hc run`에는 `--env` 옵션이 없고(`hc exec` 전용) `--name`과 초기 프롬프트로 역할이 자동 식별되므로 `--env`나 `env` 래퍼를 붙이지 않는다(`AGENTKIT_ROLE`은 헤드리스 실행과 `manual` 수동 터미널 전용).
 - 대화형 작업자에 후속 지시를 보낼 때는 `hc send --wait <대상> "<내용>"`을 써서 전송과 해당 턴 종료 대기를 한 번에 처리한다(`hc send`는 자동으로 Enter를 입력하므로 확인 없이 `hc keys enter`를 추가로 누르지 않는다).
 - 프롬프트·작업 인계·자료 발췌에서 요청·배정·실행한 사람, 모델, 세션 ID, 별칭을 생략한다. 실행 인자·이름은 ASCII로 쓰고 한글 지시는 파일에 적어 경로를 넘긴다.
 - Claude의 `--add-dir`는 가변 인자이므로 프롬프트 앞에 `'--'`를 둔다. 실행 명령의 `--`는 작은따옴표 `'--'`로 감싼다(Codex PowerShell 파서 호환).
@@ -51,7 +51,7 @@
 ## 7. 확인된 제약
 - Codex를 `hc run`으로 대화형 기동할 때는 `--no-daemon`이 필요하다(없으면 공유 데몬에서 실행되어 `hc` 자식 추적이 끊긴다; 단발성 검토는 `codex exec` 사용 가능).
 - `codex exec`는 Git 저장소 밖 폴더에서 실행을 거부한다. 비Git 프로젝트의 Codex 검토에는 `--skip-git-repo-check`를 더한다.
-- Antigravity는 전역 `~/.gemini/config/hooks.json`·`skills.json` 및 프로젝트 `.agents/` 설정을 읽으며, 규칙 파일로 `AGENTS.md`와 `GEMINI.md`를 모두 자동 발견한다(`AGENTS.md` 단일 파일만 두어 중복 로드를 피한다).
+- Antigravity는 전역 `~/.gemini/config/hooks.json`·`skills.json`(및 `~/.agents/skills`, 이름 충돌 시 `~/.gemini` 우선)과 프로젝트 `.agents/` 설정을 읽으며, 규칙 파일로 `AGENTS.md`와 `GEMINI.md`를 모두 자동 발견한다(`AGENTS.md` 단일 파일만 두어 중복 로드를 피한다).
 
 ## 9. 훅
 - 훅은 실수를 막는 장치이지 보안 경계가 아니다. 실제 강제는 브랜치 보호, 토큰 범위, CLI 네이티브 샌드박스·권한 프로필로 한다. `guard.mjs`는 자기 오류나 시간 초과 때 차단하지 않고 통과시킨다.
@@ -59,7 +59,7 @@
   - 비밀 파일 열람·편집(`.env` 계열[`.env.example`·`.env.test`·`.env.ci` 제외], 개인키·인증서·키스토어, SSH 키, 클라우드 ADC, 셸 히스토리, `.pypirc`, `.tfstate`, 인라인 Node/Python/PowerShell/`.NET` 스크립트 및 브라우저 `file://` 포함)
   - 테스트 계정·쿠키(`*test-accounts*.json`·`*cookies.txt`·`*.cookies`·`*storage-state*.json`) 열람·복사·기존 파일 덮어쓰기 및 `curl -v`/`-i`/`--trace` 헤더 평문 덤프
   - 저장소 정책이 막는 `git push`(`agentkit.*` 설정이 하나도 없는, 키트로 설정한 적 없는 저장소에는 push 규칙을 적용하지 않는다)와 `pre-push` 우회(`--no-verify`, `core.hooksPath`, `GIT_CONFIG_*`, `send-pack`), `git config agentkit.*` 직접 변조, 작업자의 `--match-head-commit` 없는 `gh pr merge`
-  - 권한·훅 우회 플래그(`--dangerously-*`, `bypassPermissions`, `--bare`, `--safe-mode`, `--restricted`, user 없는 `--setting-sources`, `-a never`, `danger-full-access`, Codex `features.hooks=false`·`--disable hooks`, `--settings`의 `disableAllHooks` 등)
+  - 권한·훅 우회 플래그(`--dangerously-*`, `bypassPermissions`, `--bare`, `--safe-mode`, `--restricted`, user 없는 `--setting-sources`, `-a never`, `danger-full-access`, Codex `features.hooks=false`·`--disable hooks`·`--ignore-user-config`·`--ignore-rules`, `--settings`의 `disableAllHooks` 등)
   - `.git/hooks`·`.git/config`·`.git` 삭제, `handoff/<ID>/`의 승인·수락·검증 증거(상위 폴더 삭제 포함) 직접 변경, 일반 세션의 `agent-kit/**` 및 전역·로컬 에이전트 설정(`.claude/`·`.mcp.json`·`.codex/`·`.gemini/`·`.agents/`·`.agent/`·`_agents/`·`hc-rate.json`) 변경, 훅 비활성화(`"enabled": false`, `"disableAllHooks": true`)
   - 하위 세션(`sub-*` 및 AGY `conversationId` 유지 스코프)의 `hc` 제어(`hc exec` 포함)·서브에이전트/워크플로 증식·`verify.ps1`·`init.ps1` 실행, 작업자 세션의 타 작업자 실행·`-Prepare`/`-Accept`/`-Cancel`(중첩 `powershell -Command` 포함)·정책 변경·직계 자식 외 터미널 제어.
   - 작업자·하위 세션의 설계자 소유 지침 파일(키트 프로젝트 루트의 `AGENTS.md`·`SPEC.md`·`SESSION_HANDOFF.md`·`agent-roles/`) 변경, 작업자의 검토 보고서(`handoff/sub-…-review-<n>-report.md`) 작성, 다른 검토의 보고서 작성.

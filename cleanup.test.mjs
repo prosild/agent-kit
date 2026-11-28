@@ -202,6 +202,24 @@ const cases = [
     const paths = m.Items.flatMap(i => i.Paths || []);
     return r.status === 0 && paths.some(p => /review-1\.md$/.test(p)) && !paths.some(p => /sub-shop-t01-review-1(\\|\/|$)/.test(p));
   }],
+  ['env.exe 래퍼로 띄운 Claude 작업자 자식도 대화 기록(.jsonl)을 정상 매칭', () => {
+    const dir = join(TMP, 'env-claude'), proj = join(dir, 'proj'), h = join(proj, 'handoff'), mock = join(dir, 'mock'), t = join(dir, 'temp'), fakeHome = join(dir, 'home');
+    mkdirSync(h, { recursive: true }); mkdirSync(mock); mkdirSync(t);
+    const prompt = `Read ${join(h, 'T01.md')} and follow it.`;
+    const slug = proj.replace(/[\\/]+$/, '').replace(/[^A-Za-z0-9]/g, '-');
+    const claudeDir = join(fakeHome, '.claude', 'projects', slug);
+    mkdirSync(claudeDir, { recursive: true });
+    const trFile = join(claudeDir, 'sess-env-1.jsonl');
+    writeFileSync(trFile, JSON.stringify({ type: 'user', message: { content: prompt } }) + '\n');
+    writeFileSync(join(mock, 'ls.json'), JSON.stringify({ terminals: [{ address: 't7', parent: 't0', state: 'finished', agent: 'claude', name: 'task-shop-t01' }] }));
+    writeFileSync(join(mock, 'seq.txt'), JSON.stringify({ state: 'finished', status: { state: 'done' }, cwd: proj, created_ms: Date.now() - 60_000,
+      argv: ['C:/Program Files/Git/usr/bin/env.exe', 'AGENTKIT_ROLE=worker', 'claude.exe', '--model', 'opus', '--', prompt] }) + '\n');
+    const r = spawnSync(PWSH, [...PWSH_BASE, '-File', join(KIT, 'cleanup.ps1'), '-Parent', 't0'],
+      { encoding: 'utf8', env: { ...process.env, USERPROFILE: fakeHome, HOME: fakeHome, PATH: `${BIN}${delimiter}${process.env.PATH}`, MOCKHC_DIR: mock, TEMP: t, TMP: t, LOCALAPPDATA: join(dir, 'localapp') } });
+    const m = JSON.parse(readFileSync(join(t, 'agent-cleanup', 'mine-t0.json'), 'utf8').replace(/^\uFEFF/, ''));
+    const paths = m.Items.flatMap(i => i.Paths || []);
+    return r.status === 0 && paths.some(p => /sess-env-1\.jsonl$/.test(p));
+  }],
 ];
 let bad = 0;
 for (const [name, fn] of cases) {

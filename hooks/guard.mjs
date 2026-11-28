@@ -15,8 +15,8 @@ const SECRET_DIR = /(^|[\\/])(\.codex[\\/]auth\.json|\.aws[\\/]credentials|\.doc
 // Non-secret env templates, source/doc files, and committed non-local `.env.test` / `.env.ci` defaults.
 const SECRET_OK = /(\.env(\.[\w-]+)*\.(example|sample|template|defaults|dist|schema|md|ts|js|mjs|cjs)|(^|[\\/])\.env\.(test|ci))$/i;
 // Permission & hook-bypass flags across Claude, Codex, and Antigravity (including Claude's --bare / --safe-mode / --restricted /
-// user-less --setting-sources, which all skip the user settings file where this guard is registered).
-const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|--bare\b|--safe-mode\b|--restricted\b|--setting-sources(?:[ =]+)["']?(?![^"'\s]*\buser\b)[a-z,]+|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access|features\.hooks\s*=\s*["']?false|--disable[ =]+["']?hooks\b|disableAllHooks\\?["'\s:=]+true/i;
+// user-less --setting-sources and Codex's --ignore-user-config / --ignore-rules, which skip user settings/rules).
+const BYPASS = /--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--permission-mode[ =]+["']?bypassPermissions|defaultMode["'\s:=]+bypassPermissions|--no-parent\b|--yolo\b|--bare\b|--safe-mode\b|--restricted\b|--ignore-user-config\b|--ignore-rules\b|--setting-sources(?:[ =]+)["']?(?![^"'\s]*\buser\b)[a-z,]+|(^|\s)(-s|--sandbox)[ =]+["']?danger-full-access|(^|\s)(-a|--ask-for-approval)[ =]+["']?never\b|approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access|features\.(?:codex_)?hooks\s*=\s*["']?false|--disable[ =]+["']?(?:codex_)?hooks\b|disableAllHooks\\?["'\s:=]+true/i;
 const READERS = /^(cat|type|head|tail|less|more|gc|get-content|import-csv|convertfrom-stringdata|select-string|sls|copy|copy-item|cp|scp|mv|move|move-item|ren|rename-item|curl|base64|grep|rg|findstr|awk|sed|diff|certutil|xxd|od|strings|sort|nl|tac|node|python|python3|py|powershell|pwsh)$/i;
 const MUTATORS = /^(rm|del|erase|rd|rmdir|remove-item|ri|mv|move|move-item|mi|ren|rename|rename-item|rni|new-item|ni|set-content|sc|add-content|ac|clear-content|clc|out-file|tee|tee-object|truncate|cp|copy|copy-item|cpi)$/i;
 
@@ -392,6 +392,29 @@ function words(seg, unwrapCmdScript = false) {
 
 function verbOf(word) { return String(word || '').replace(/^[({]+/, '').replace(/^["'`]+|["'`]+$/g, '').replace(/^.*[\\/]/, '').replace(/\.(exe|cmd|ps1)$/i, ''); }
 
+function unwrapEnvIndex(tokens, start = 0) {
+  let i = start;
+  while (i < tokens.length) {
+    const t = norm(tokens[i]);
+    const v = verbOf(tokens[i]).toLowerCase();
+    if (v === 'env') {
+      i++;
+      while (i < tokens.length) {
+        const et = norm(tokens[i]);
+        if (et === '--') { i++; break; }
+        if (/^-(?:u|-unset|C|-chdir|S|-split-string)$/i.test(et)) { i += 2; continue; }
+        if (/^-(?:i|-ignore-environment|0|-null)$/i.test(et) || /^--(?:unset|chdir|split-string)=/i.test(et)) { i++; continue; }
+        if (/^[A-Za-z_]\w*=/.test(et)) { i++; continue; }
+        break;
+      }
+      continue;
+    }
+    if (/^[A-Za-z_]\w*=/.test(t) && i + 1 < tokens.length) { i++; continue; }
+    break;
+  }
+  return i;
+}
+
 function hcRunInfo(w) {
   const rIdx = hcSubcommandIndex(w);
   if (norm(w[rIdx] || '').toLowerCase() !== 'run') return null;
@@ -414,6 +437,8 @@ function hcRunInfo(w) {
     if (tok.startsWith('-')) { i++; continue; }
     break;
   }
+  const unwrapped = unwrapEnvIndex(w, i);
+  if (unwrapped < w.length) i = unwrapped;
   const targetExe = w[i] || '';
   const targetVerb = verbOf(targetExe).toLowerCase();
   const rest = w.slice(i + 1);
@@ -472,7 +497,9 @@ function hcTargetInfo(target) {
   if (!t) return { provider: 'unknown', parent: '', status: '' };
   const parent = typeof t.parent === 'string' ? t.parent : '';
   const status = typeof t.status?.state === 'string' ? t.status.state.toLowerCase() : '';
-  const launch = Array.isArray(t.argv) ? t.argv[0] : null;
+  const argv = Array.isArray(t.argv) ? t.argv.map(String) : [];
+  const launchIdx = unwrapEnvIndex(argv, 0);
+  const launch = argv[launchIdx < argv.length ? launchIdx : 0] || null;
   const programs = [launch, t.foreground?.name, t.status?.app].map((name) => typeof name === 'string' ? verbOf(name) : '');
   if (programs.some((name) => AGY_PROGRAM.test(name))) return { provider: 'agy', parent, status };
   if (typeof t.address === 'string' && t.state === 'live' && (programs[1] || programs[2] || (programs[0] && !WRAPPER.test(programs[0])))) {

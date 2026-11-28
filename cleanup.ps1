@@ -336,7 +336,26 @@ function Invoke-ListMine {
             $logMap[[IO.Path]::GetFullPath($lp)] = $t.address
           }
         }
-        $exe = ([string]$argv[0]) -replace '^.*[\\/]', '' -replace '\.(exe|cmd|ps1)$', ''
+        $exeIdx = 0
+        while ($exeIdx -lt $argv.Count) {
+          $candExe = ([string]$argv[$exeIdx]) -replace '^.*[\\/]', '' -replace '\.(exe|cmd|ps1)$', ''
+          if ($candExe -ieq 'env') {
+            $exeIdx++
+            while ($exeIdx -lt $argv.Count) {
+              $et = [string]$argv[$exeIdx]
+              if ($et -eq '--') { $exeIdx++; break }
+              if ($et -match '^-(u|-unset|C|-chdir|S|-split-string)$') { $exeIdx += 2; continue }
+              if ($et -match '^-(i|-ignore-environment|0|-null)$' -or $et -match '^--(unset|chdir|split-string)=') { $exeIdx++; continue }
+              if ($et -match '^[A-Za-z_]\w*=') { $exeIdx++; continue }
+              break
+            }
+            continue
+          }
+          if (([string]$argv[$exeIdx]) -match '^[A-Za-z_]\w*=' -and ($exeIdx + 1) -lt $argv.Count) { $exeIdx++; continue }
+          break
+        }
+        $realExeArg = if ($exeIdx -lt $argv.Count) { [string]$argv[$exeIdx] } elseif ($argv.Count) { [string]$argv[0] } else { '' }
+        $exe = $realExeArg -replace '^.*[\\/]', '' -replace '\.(exe|cmd|ps1)$', ''
         if ($exe -ieq 'claude') {
           $tr = @(Find-ClaudeTranscript $cwd ([string]$argv[-1]) $g.created_ms)
           if ($tr.Count) { [void]$items.Add((New-Item2 'claude' ("{0} / {1} (child {2} {3})" -f (Split-Path (Split-Path $tr[0] -Parent) -Leaf), [IO.Path]::GetFileNameWithoutExtension($tr[0]), $t.address, $t.name) $tr $null $true)) }

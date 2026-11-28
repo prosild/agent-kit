@@ -467,7 +467,14 @@ const cases = [
   ['BLOCK', 'Claude --safe-mode 훅 우회 플래그 차단', bash('claude --safe-mode "do it"')],
   ['BLOCK', 'Claude --restricted(사용자 설정의 훅을 읽지 않는 모드) 차단', bash('claude --restricted -p "do it"')],
   ['BLOCK', 'Codex -c features.hooks=false(훅 끄기) 차단', bash('codex exec -c features.hooks=false "do it"')],
+  ['BLOCK', 'Codex -c features.codex_hooks=false(훅 끄기) 차단', bash('codex exec -c features.codex_hooks=false "do it"')],
   ['BLOCK', 'Codex --disable hooks(훅 끄기) 차단', bash('codex exec --disable hooks "do it"')],
+  ['BLOCK', 'Codex --ignore-user-config(사용자 설정 건너뛰기) 차단', bash('codex exec --ignore-user-config "do it"')],
+  ['BLOCK', 'Codex --ignore-rules(실행 규칙 건너뛰기) 차단', bash('codex exec --ignore-rules "do it"')],
+  ['ALLOW', '커밋 메시지의 --ignore-user-config 언급은 오탐 없음', bash('git commit -m "docs: codex --ignore-user-config 차단"')],
+  ['BLOCK', "hc run ... '--' env KEY=VAL codex 도 --no-daemon 누락 차단(env 래퍼 언래핑)", bash("hc run --bg --name task-p-t01 --cwd C:/p '--' \"C:/Program Files/Git/usr/bin/env.exe\" AGENTKIT_ROLE=worker codex \"Read handoff/T01.md and follow it.\"")],
+  ['ALLOW', "hc run ... '--' env KEY=VAL codex --no-daemon 은 허용", bash("hc run --bg --name task-p-t01 --cwd C:/p '--' env AGENTKIT_ROLE=worker codex --no-daemon \"Read handoff/T01.md and follow it.\"")],
+  ['BLOCK', "hc run ... '--' env KEY=VAL agy 조사 세션 모드 누락 차단(env 래퍼 언래핑)", bash("hc run --bg --name sub-p-t01-research-1 --cwd C:/p '--' env.exe AGENTKIT_ROLE=sub-p-t01-research-1 agy.exe --model m --sandbox -i \"Read C:/p/handoff/sub-p-t01-research-1.md and follow it.\"")],
   ['BLOCK', "Claude --settings '{\"disableAllHooks\":true}' 차단", bash(`claude --settings '{"disableAllHooks":true}' -p "do it"`)],
   ['ALLOW', 'Codex -c features.hooks=true 는 허용', bash('codex exec -c features.hooks=true "do it"')],
   ['ALLOW', '커밋 메시지의 --restricted 언급은 오탐 없음', bash('git commit -m "docs: claude --restricted 차단 설명"')],
@@ -576,6 +583,7 @@ const agyLaunch = (stem) => bash(`hc run --bg --name ${stem} --cwd C:/p -- agy.e
   checkRate('속도 제한: 31초 뒤 다음 AGY 실행은 허용', 'ALLOW', agyLaunch('sub-p-t02-review-1'), { rateFile: rf, nowMs: T0 + 32_000 });
   checkRate('속도 제한: 가드가 두 번 등록돼 같은 호출이 0.1초 뒤 다시 보여도 한 번으로 센다', 'ALLOW', agyLaunch('sub-p-t02-review-1'), { rateFile: rf, nowMs: T0 + 32_100 });
   checkRate('속도 제한: 한 명령에 AGY 실행 2개 연달아 적으면 차단', 'BLOCK', bash(`hc run --bg --name sub-p-t03-review-1 --cwd C:/p -- agy.exe --mode plan -i "Read handoff/sub-p-t03-review-1.md and follow it." && hc run --bg --name sub-p-t04-review-1 --cwd C:/p -- agy.exe --mode plan -i "Read handoff/sub-p-t04-review-1.md and follow it."`), { rateFile: rf, nowMs: T0 + 90_000 }, '최소 30초');
+  checkRate('속도 제한: env.exe로 감싼 AGY 실행도 30초 간격 제한 적용', 'BLOCK', bash(`hc run --bg --name sub-p-t05-research-1 --cwd C:/p '--' env.exe FOO=1 agy.exe --mode plan -i "Read handoff/sub-p-t05-research-1.md and follow it."`), { rateFile: rf, nowMs: T0 + 40_000 }, '최소 30초');
 }
 // 2) AGY 10분 6회 상한
 {

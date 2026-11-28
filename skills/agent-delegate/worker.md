@@ -8,8 +8,8 @@
 - **병렬 `worktree` 작업 선행 준비**: 인계 머리말에 `worktree:`가 있으면 작업자를 띄우기 전에 저장소 루트에서 `git worktree add .worktrees/<소문자 id> -b <브랜치>`로 worktree를 먼저 만들고, 아래 실행의 `--cwd`(수동 인계는 실행 폴더)를 해당 worktree 경로로 지정해 메인 루트 오염을 원천 차단한다.
 - **수동 인계(`agentkit.crossAgentMode=manual` 또는 `SPEC.md` 수동 인계)**:
   - 인계 작성과 `verify.ps1 -Id <ID> -Prepare`를 완료한 뒤 사용자에게 실행 폴더, 환경변수(PowerShell `$env:AGENTKIT_ROLE='worker'`, `sh`·`bash` `export AGENTKIT_ROLE=worker`), 도구 실행 명령과 첫 문장을 안내한다. 결과는 `handoff/<ID>-report.md`로 받는다.
-- **자동 인계(`hc run`) 공통 형식** (`<p>`는 `AGENTS.md`의 `hc 이름 약칭`, 작업 ID에 `.` 금지):
-  `hc run --bg --env AGENTKIT_ROLE=worker --name task-<p>-<소문자 id> --label herdr.space=<ID> --label herdr.tab=<ID> --cwd <실행 폴더> '--' <도구 명령>`
+- **자동 인계(`hc run`) 공통 형식** (`<p>`는 `AGENTS.md`의 `hc 이름 약칭`, 작업 ID에 `.` 금지; `--name`과 초기 프롬프트로 역할이 자동 식별되므로 `hc run`에 없는 `--env`나 `env` 래퍼는 붙이지 않는다):
+  `hc run --bg --name task-<p>-<소문자 id> --label herdr.space=<ID> --label herdr.tab=<ID> --cwd <실행 폴더> '--' <도구 명령>`
   - **Claude**: `claude --model <모델> --permission-mode auto --allowedTools "Bash(git *),Bash(powershell *verify.ps1*),Bash(pwsh *verify.ps1*)" '--' "Read <프로젝트 폴더>/handoff/<ID>.md and follow it."` (worktree에서 띄울 때는 `'--'` 앞에 `--add-dir "<프로젝트 폴더>"`를 더한다. 실행 폴더 밖인 메인 폴더의 인계·지침 파일을 읽을 때 승인 창이 뜨지 않게 한다)
   - **Antigravity**: `agy --model <모델> --mode auto --sandbox --log-file "<프로젝트 폴더>/handoff/task-<p>-<소문자 id>.log" -i "Read <프로젝트 폴더>/handoff/<ID>.md and follow it."` (연속 AGY 실행 시 최소 30초 간격 준수)
   - **Codex**: `codex --no-daemon [-m <모델>] "Read <프로젝트 폴더>/handoff/<ID>.md and follow it."`
